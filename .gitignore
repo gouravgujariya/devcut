@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Compiled output
+out/
+dist/
+*.vsix
+
+# Build artifacts
+*.js.map
+
+# Environment & secrets
+.env
+.env.*
+*.pem
+*.key
+
+# VS Code extension packaging
+*.vsix
+
+# Databases
+*.db
+*.sqlite
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# graphify knowledge graph (generated, not source)
+graphify-out/
