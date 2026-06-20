@@ -22,7 +22,7 @@
       --muted:     #8b949e;
     }
 
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; overflow-x: hidden; }
 
     body {
       background: var(--bg);
@@ -30,6 +30,7 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
       line-height: 1.6;
       overflow-x: hidden;
+      max-width: 100%;
     }
 
     /* ── CANVAS BACKGROUND ── */
@@ -679,6 +680,7 @@
     <h2 class="section-title">Slot bidding, explained simply</h2>
     <p class="section-sub">No agency needed. Set a bid, choose a slot type, and your message starts running the moment you win the auction.</p>
 
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
     <table class="bid-table">
       <thead>
         <tr>
@@ -720,6 +722,7 @@
         </tr>
       </tbody>
     </table>
+    </div>
 
     <div style="margin-top:2.5rem;display:flex;gap:1rem;flex-wrap:wrap;">
       <a class="btn-primary" href="mailto:er.gouravgujariya@gmail.com?subject=WaitWage Advertiser Inquiry">Contact Us to Get Started</a>
