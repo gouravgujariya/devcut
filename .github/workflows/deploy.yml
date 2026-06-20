@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   deploy:
@@ -12,14 +12,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Inject secrets into HTML
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          sed -i "s|https://YOUR_PROJECT.supabase.co|$SUPABASE_URL|g" docs/index.html
-          sed -i "s|YOUR_ANON_KEY|$SUPABASE_ANON_KEY|g" docs/index.html
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
