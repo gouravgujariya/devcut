@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [master]
+    branches: [main, master]
 
 jobs:
   deploy:
@@ -12,20 +12,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Inject secrets into HTML
-        env:
-          # SUPABASE_URL secret must be the actual project URL, e.g.:
-          #   https://akjeoypmqqahdrevzajq.supabase.co
-          # NOT a JWT token. Set this in GitHub → Settings → Secrets and variables → Actions.
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: |
-          sed -i "s|__SUPABASE_URL__|$SUPABASE_URL|g" docs/index.html
-          sed -i "s|__SUPABASE_ANON_KEY__|$SUPABASE_ANON_KEY|g" docs/index.html
-          cp landing/index.html docs/landing.html
-          sed -i "s|__SUPABASE_URL__|$SUPABASE_URL|g" docs/landing.html
-          sed -i "s|__SUPABASE_ANON_KEY__|$SUPABASE_ANON_KEY|g" docs/landing.html
 
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
