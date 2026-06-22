@@ -58,7 +58,7 @@
       "properties": {
         "kickbackStatus.backendUrl": {
           "type": "string",
-          "default": "http://localhost:3000",
+          "default": "https://waitwage-production.up.railway.app",
           "description": "Backend URL that serves the current sponsor line and records impressions."
         },
         "kickbackStatus.enabled": {

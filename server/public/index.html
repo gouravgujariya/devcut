@@ -653,6 +653,31 @@
 </div>
 
 <script>
+  // ── Admin key auth ───────────────────────────────────────────
+  let ADMIN_KEY = sessionStorage.getItem('adminKey') || '';
+
+  function ensureKey() {
+    if (ADMIN_KEY) return true;
+    const k = prompt('Enter admin key:');
+    if (!k) return false;
+    ADMIN_KEY = k.trim();
+    sessionStorage.setItem('adminKey', ADMIN_KEY);
+    return true;
+  }
+
+  async function apiFetch(url, opts = {}) {
+    if (!ensureKey()) throw new Error('no key');
+    opts.headers = { ...(opts.headers || {}), 'x-admin-key': ADMIN_KEY };
+    const res = await fetch(url, opts);
+    if (res.status === 401) {
+      sessionStorage.removeItem('adminKey');
+      ADMIN_KEY = '';
+      alert('Wrong admin key. Reload to try again.');
+      throw new Error('unauthorized');
+    }
+    return res;
+  }
+
   // ── Helpers ──────────────────────────────────────────────────
   function esc(s) {
     return String(s == null ? '' : s)
@@ -731,7 +756,7 @@
   async function loadOverview() {
     setLoading('overview', true);
     try {
-      const d = await fetch('/api/overview').then(r => r.json());
+      const d = await apiFetch('/api/overview').then(r => r.json());
 
       document.getElementById('stat-impressions').textContent = (d.totalImpressions ?? 0).toLocaleString();
       document.getElementById('stat-clicks').textContent = (d.totalClicks ?? 0).toLocaleString();
@@ -820,7 +845,7 @@
   async function loadSponsors() {
     setLoading('sponsors', true);
     try {
-      const sponsors = await fetch('/api/sponsors').then(r => r.json());
+      const sponsors = await apiFetch('/api/sponsors').then(r => r.json());
       const tbody = document.getElementById('sponsors-tbody');
       if (!sponsors.length) {
         tbody.innerHTML = '<tr><td colspan="10" class="empty">No ads yet. Click "Add Ad" to create one.</td></tr>';
@@ -927,7 +952,7 @@
   async function loadInvites() {
     setLoading('invites', true);
     try {
-      const invites = await fetch('/api/invites').then(r => r.json());
+      const invites = await apiFetch('/api/invites').then(r => r.json());
       const tbody = document.getElementById('invites-tbody');
       if (!invites.length) {
         tbody.innerHTML = '<tr><td colspan="6" class="empty">No invites yet.</td></tr>';
@@ -977,7 +1002,7 @@
     const body = { email };
     if (code) body.code = code;
     try {
-      const res = await fetch('/api/invites', {
+      const res = await apiFetch('/api/invites', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -996,7 +1021,7 @@
   async function loadUsers() {
     setLoading('users', true);
     try {
-      const users = await fetch('/api/users').then(r => r.json());
+      const users = await apiFetch('/api/users').then(r => r.json());
       const tbody = document.getElementById('users-tbody');
       if (!users.length) {
         tbody.innerHTML = '<tr><td colspan="7" class="empty">No registered users yet.</td></tr>';
@@ -1027,7 +1052,7 @@
   async function loadWithdrawals() {
     setLoading('withdrawals', true);
     try {
-      const all = await fetch('/api/withdrawals').then(r => r.json());
+      const all = await apiFetch('/api/withdrawals').then(r => r.json());
       const pending = all.filter(w => w.status === 'pending');
       const history = all.filter(w => w.status !== 'pending');
 
@@ -1128,7 +1153,7 @@
   async function loadTeams() {
     setLoading('teams', true);
     try {
-      const teams = await fetch('/api/teams').then(r => r.json());
+      const teams = await apiFetch('/api/teams').then(r => r.json());
       const tbody = document.getElementById('teams-tbody');
       if (!teams.length) {
         tbody.innerHTML = '<tr><td colspan="5" class="empty">No teams yet.</td></tr>';
