@@ -565,7 +565,7 @@ app.get("/api/users", (req, res) => {
   res.json(users);
 });
 
-app.get("/admin", adminAuth, (req, res) => {
+app.get("/admin", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
