@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>How It Works — WaitWage</title>
-  <meta name="description" content="How WaitWage turns your VS Code build time into passive income. The 4-step loop, privacy details, and technical explainer." />
+  <title>How It Works — DevCut</title>
+  <meta name="description" content="How DevCut turns your VS Code build time into passive income. The 4-step loop, privacy details, and technical explainer." />
   <link rel="stylesheet" href="shared.css" />
   <style>
     .hero { min-height: 55vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8rem 2rem 4rem; }
@@ -45,7 +45,7 @@
 <nav>
   <a class="nav-logo" href="index.html">
     <span class="live-dot"></span>
-    <span class="logo-w">Wait</span>Wage
+    <span class="logo-w">Dev</span>Cut
   </a>
   <div class="nav-links">
     <a href="how-it-works.html" class="hide-mobile" style="color:var(--text);">How It Works</a>
@@ -74,7 +74,7 @@
         <div class="big-step-num">01</div>
         <div class="big-step-content">
           <h3>📦 Install the extension</h3>
-          <p>One click from the VS Code Marketplace — or paste <code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">ext install waitwage.waitwage</code> in the command palette. The extension is open source (MIT), zero telemetry beyond impression counting, and stores nothing on your local machine beyond a pseudonymous user ID.</p>
+          <p>One click from the VS Code Marketplace — or paste <code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">ext install devcut.devcut</code> in the command palette. The extension is open source (MIT), zero telemetry beyond impression counting, and stores nothing on your local machine beyond a pseudonymous user ID.</p>
         </div>
       </div>
 
@@ -82,7 +82,7 @@
         <div class="big-step-num">02</div>
         <div class="big-step-content">
           <h3>⚙️ Run your tasks normally</h3>
-          <p>Build, test, install — exactly as you do today. WaitWage hooks into the VS Code Tasks API (<code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">onDidStartTask</code> / <code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">onDidEndTask</code> events). When a task runs for longer than 3 seconds, the extension makes a single HTTP call to fetch an ad line — nothing is sent before that threshold. No background polling. No always-on connection.</p>
+          <p>Build, test, install — exactly as you do today. DevCut hooks into the VS Code Tasks API (<code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">onDidStartTask</code> / <code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">onDidEndTask</code> events). When a task runs for longer than 3 seconds, the extension makes a single HTTP call to fetch an ad line — nothing is sent before that threshold. No background polling. No always-on connection.</p>
         </div>
       </div>
 
@@ -90,7 +90,7 @@
         <div class="big-step-num">03</div>
         <div class="big-step-content">
           <h3>📈 Impressions = earnings</h3>
-          <p>Every 30-second slot where an ad is visible is one impression. At the end of the slot, a lightweight POST records the impression ID and your pseudonymous user ID — no task content, no code, no keystrokes, nothing personal. Clicks earn more: when you click an ad, a click event is recorded (again, just the ad ID and your user ID). Your running balance is visible in the Command Palette at any time via <strong style="color:var(--text);">WaitWage: Show Earnings</strong>.</p>
+          <p>Every 30-second slot where an ad is visible is one impression. At the end of the slot, a lightweight POST records the impression ID and your pseudonymous user ID — no task content, no code, no keystrokes, nothing personal. Clicks earn more: when you click an ad, a click event is recorded (again, just the ad ID and your user ID). Your running balance is visible in the Command Palette at any time via <strong style="color:var(--text);">DevCut: Show Earnings</strong>.</p>
         </div>
       </div>
 
@@ -98,7 +98,7 @@
         <div class="big-step-num">04</div>
         <div class="big-step-content">
           <h3>💸 Withdraw to UPI</h3>
-          <p>Set your UPI ID once in the extension settings (<code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">waitWage.upiId</code>). When your balance crosses ₹50, we trigger a Razorpay X payout automatically — weekly. You get a GPay / PhonePe / Paytm notification within 48h. No bank forms. No SWIFT codes. No waiting 14 days.</p>
+          <p>Set your UPI ID once in the extension settings (<code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">devcut.upiId</code>). When your balance crosses ₹50, we trigger a Razorpay X payout automatically — weekly. You get a GPay / PhonePe / Paytm notification within 48h. No bank forms. No SWIFT codes. No waiting 14 days.</p>
         </div>
       </div>
     </div>
@@ -172,7 +172,7 @@
       border-radius:12px;padding:1.5rem 2rem;
     ">
       <strong style="color:var(--text);">Zero-trust option:</strong>
-      <span style="color:var(--muted);font-size:.9rem;"> The entire server is open source. You can fork it, plug in your own Razorpay keys, and run a self-hosted instance. The extension accepts a custom server URL via <code>waitWage.serverUrl</code> in settings.</span>
+      <span style="color:var(--muted);font-size:.9rem;"> The entire server is open source. You can fork it, plug in your own Razorpay keys, and run a self-hosted instance. The extension accepts a custom server URL via <code>devcut.backendUrl</code> in settings.</span>
     </div>
   </div>
 </section>
@@ -189,7 +189,7 @@
       </div>
       <div class="faq-item">
         <h3>Can I turn it off during focus time?</h3>
-        <p>Yes. One command — <code>WaitWage: Toggle</code> — or flip <code>waitWage.enabled</code> to <code>false</code> in settings. Earnings pause instantly and resume when you re-enable. The status bar item disappears completely while disabled.</p>
+        <p>Yes. One command — <code>DevCut: Toggle</code> — or flip <code>devcut.enabled</code> to <code>false</code> in settings. Earnings pause instantly and resume when you re-enable. The status bar item disappears completely while disabled.</p>
       </div>
       <div class="faq-item">
         <h3>How does the second-price auction work?</h3>
@@ -205,7 +205,7 @@
       </div>
       <div class="faq-item">
         <h3>Can I audit the payout math?</h3>
-        <p>Yes — the impression counter, earnings tally, and Razorpay payout trigger are all in the open-source server repo. You can also run <code>WaitWage: Show Earnings Breakdown</code> in the Command Palette to see a per-day log of slots, impressions, clicks, and accrued balance.</p>
+        <p>Yes — the impression counter, earnings tally, and Razorpay payout trigger are all in the open-source server repo. You can also run <code>DevCut: Show Earnings Breakdown</code> in the Command Palette to see a per-day log of slots, impressions, clicks, and accrued balance.</p>
       </div>
     </div>
   </div>
@@ -223,7 +223,7 @@
       font-family:'Fira Code','Cascadia Code',monospace;font-size:1rem;
       max-width:480px;margin:0 auto;
     ">
-      <span><span style="color:var(--green);">ext install</span> <span style="color:var(--text);">waitwage.waitwage</span></span>
+      <span><span style="color:var(--green);">ext install</span> <span style="color:var(--text);">devcut.devcut</span></span>
       <button id="copyBtn" onclick="copyCmd()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:.35rem .75rem;font-size:.8rem;cursor:pointer;transition:all .2s;font-family:inherit;">Copy</button>
     </div>
     <p style="color:var(--muted);font-size:.82rem;margin-top:1rem;">
@@ -233,18 +233,18 @@
 </section>
 
 <footer>
-  <div class="footer-logo">⚡ <span>Wait</span>Wage</div>
+  <div class="footer-logo">⚡ <span>Dev</span>Cut</div>
   <p style="margin-top:.4rem;">Open source · MIT licence · Built for developers, by a developer</p>
   <div style="margin-top:1rem;display:flex;gap:1.5rem;justify-content:center;flex-wrap:wrap;">
     <a href="how-it-works.html">How It Works</a>
     <a href="earnings.html">Earnings</a>
     <a href="advertisers.html">Advertise</a>
     <a href="index.html#india">India</a>
-    <a href="https://github.com/gouravgujariya/waitwage" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://github.com/gouravgujariya/devcut" target="_blank" rel="noopener">GitHub</a>
     <a href="mailto:er.gouravgujariya@gmail.com">Contact</a>
     <a href="index.html#faq">FAQ</a>
   </div>
-  <p style="margin-top:1.5rem;font-size:.78rem;color:#3e4450;">© 2026 WaitWage. Making idle time less idle.</p>
+  <p style="margin-top:1.5rem;font-size:.78rem;color:#3e4450;">© 2026 DevCut. Making idle time less idle.</p>
 </footer>
 
 <script>
@@ -290,7 +290,7 @@
 
 /* ── COPY BUTTON ── */
 function copyCmd() {
-  navigator.clipboard.writeText('ext install waitwage.waitwage').then(() => {
+  navigator.clipboard.writeText('ext install devcut.devcut').then(() => {
     const btn = document.getElementById('copyBtn');
     btn.textContent = 'Copied ✓';
     btn.style.color = 'var(--green)';
