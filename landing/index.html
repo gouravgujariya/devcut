@@ -1262,31 +1262,24 @@ setInterval(() => {
   setTimeout(() => { earningsBadge.style.transform = 'scale(1)'; }, 200);
 }, 4500);
 
-/* ── EARLY ACCESS FORM + SUPABASE ── */
+/* ── EARLY ACCESS FORM → DevCut backend ── */
 (function () {
-  // ⚠️ Replace these two values after you create your Supabase project:
-  // Project URL  →  Supabase dashboard → Settings → API → Project URL
-  // Anon key     →  Supabase dashboard → Settings → API → anon public key
-  const SUPABASE_URL = 'https://akjeoypmqqahdrevzajq.supabase.co';
-  const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFramVveXBtcXFhaGRyZXZ6YWpxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE4NDgzNzksImV4cCI6MjA5NzQyNDM3OX0.VMeTyQfqKO_M8uJ9UFQiWsYhcvBzjz6CtFl7oh8Qcvo';
-  const TABLE        = 'early_users';
-  const TOTAL_SPOTS  = 500;
+  const BACKEND = 'https://waitwage-production.up.railway.app';
+  const TOTAL_SPOTS = 500;
 
-  const form       = document.getElementById('earlyForm');
-  const submitBtn  = document.getElementById('submitBtn');
-  const successEl  = document.getElementById('formSuccess');
-  const errorEl    = document.getElementById('formError');
-  const countEl    = document.getElementById('earlyCount');
+  const form      = document.getElementById('earlyForm');
+  const submitBtn = document.getElementById('submitBtn');
+  const successEl = document.getElementById('formSuccess');
+  const errorEl   = document.getElementById('formError');
+  const countEl   = document.getElementById('earlyCount');
 
-  /* fetch current sign-up count to show remaining spots */
+  /* fetch current sign-up count */
   async function fetchCount() {
     try {
-      const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/rpc/get_early_user_count`,
-        { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
-      );
-      const count = await res.json();
-      const remaining = Math.max(0, TOTAL_SPOTS - count);
+      const res = await fetch(`${BACKEND}/v1/public/stats`);
+      const data = await res.json();
+      const used = data.totalDevs || 0;
+      const remaining = Math.max(0, TOTAL_SPOTS - used);
       countEl.textContent = remaining + ' of ' + TOTAL_SPOTS;
     } catch { countEl.textContent = TOTAL_SPOTS + ' of ' + TOTAL_SPOTS; }
   }
@@ -1296,39 +1289,30 @@ setInterval(() => {
     e.preventDefault();
     errorEl.style.display = 'none';
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Submitting…';
+    submitBtn.textContent = 'Sending your code…';
 
     const payload = {
-      name:       document.getElementById('f-name').value.trim(),
-      email:      document.getElementById('f-email').value.trim().toLowerCase(),
-      role:       document.getElementById('f-role').value,
-      github:     document.getElementById('f-github').value.trim() || null,
-      company:    document.getElementById('f-company').value.trim() || null,
-      created_at: new Date().toISOString(),
+      name:    document.getElementById('f-name').value.trim(),
+      email:   document.getElementById('f-email').value.trim().toLowerCase(),
+      role:    document.getElementById('f-role').value,
+      github:  document.getElementById('f-github').value.trim() || null,
+      company: document.getElementById('f-company').value.trim() || null,
     };
 
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/${TABLE}`, {
+      const res = await fetch(`${BACKEND}/v1/public/signup`, {
         method: 'POST',
-        headers: {
-          apikey: SUPABASE_KEY,
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
+
+      const body = await res.json().catch(() => ({}));
 
       if (res.ok) {
         form.style.display = 'none';
         successEl.style.display = 'block';
         fetchCount();
       } else {
-        const body = await res.json().catch(() => ({}));
-        /* duplicate email → friendly message */
-        if (body.code === '23505') {
-          throw new Error('This email is already on the list!');
-        }
         throw new Error(body.message || 'Something went wrong. Please try again.');
       }
     } catch (err) {

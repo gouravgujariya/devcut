@@ -5,6 +5,9 @@ const { z } = require("zod");
 const db = require("./db");
 const { signAccessToken, getPublicJwk } = require("./auth");
 const { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit } = require("./middleware");
+const { Resend } = require("resend");
+
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 const app = express();
 app.use(express.json());
@@ -398,6 +401,164 @@ app.get("/v1/public/stats", (req, res) => {
     topTaskTypes,
     lastUpdated: new Date().toISOString(),
   });
+});
+
+// ─── Public Signup → generate invite + send email ────────────────────────────
+
+function buildInviteEmail(name, code) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Your DevCut invite code</title>
+</head>
+<body style="margin:0;padding:0;background:#0d1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#e2e8f0;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;padding:40px 20px;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#161b22;border:1px solid #30363d;border-radius:12px;overflow:hidden;">
+
+        <!-- Header -->
+        <tr>
+          <td style="padding:32px 40px 24px;border-bottom:1px solid #21262d;">
+            <div style="font-size:22px;font-weight:900;letter-spacing:-.03em;color:#fff;">
+              ⚡ <span style="color:#58a6ff;">Dev</span>Cut
+            </div>
+            <div style="font-size:13px;color:#8b949e;margin-top:4px;">Get paid while you wait on builds</div>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:32px 40px;">
+            <p style="margin:0 0 16px;font-size:16px;color:#c9d1d9;">
+              Hey ${name ? name.split(' ')[0] : 'dev'} 👋
+            </p>
+            <p style="margin:0 0 24px;font-size:15px;color:#8b949e;line-height:1.6;">
+              You're in. Here's your personal DevCut invite code — it activates the VS Code extension and starts earning you money during every build, install, and deploy.
+            </p>
+
+            <!-- Invite code box -->
+            <div style="background:#0d1117;border:2px solid #58a6ff;border-radius:10px;padding:24px;text-align:center;margin:0 0 28px;">
+              <div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#8b949e;margin-bottom:10px;">Your Invite Code</div>
+              <div style="font-size:28px;font-weight:900;letter-spacing:.08em;color:#58a6ff;font-family:monospace;">${code}</div>
+              <div style="font-size:12px;color:#3d4451;margin-top:8px;">One-time use · Keep this safe</div>
+            </div>
+
+            <!-- Steps -->
+            <p style="margin:0 0 14px;font-size:14px;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.08em;">How to activate</p>
+            <table cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:28px;">
+              <tr>
+                <td style="padding:10px 0;border-bottom:1px solid #21262d;">
+                  <span style="display:inline-block;width:24px;height:24px;background:#58a6ff;color:#0d1117;border-radius:50%;font-size:12px;font-weight:700;text-align:center;line-height:24px;margin-right:12px;">1</span>
+                  <span style="color:#c9d1d9;font-size:14px;">Open VS Code → Extensions (<code style="background:#21262d;padding:1px 6px;border-radius:4px;font-size:12px;">Ctrl+Shift+X</code>) → search <strong style="color:#fff;">DevCut</strong> → Install</span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:10px 0;border-bottom:1px solid #21262d;">
+                  <span style="display:inline-block;width:24px;height:24px;background:#58a6ff;color:#0d1117;border-radius:50%;font-size:12px;font-weight:700;text-align:center;line-height:24px;margin-right:12px;">2</span>
+                  <span style="color:#c9d1d9;font-size:14px;">Open Command Palette (<code style="background:#21262d;padding:1px 6px;border-radius:4px;font-size:12px;">Ctrl+Shift+P</code>) → type <strong style="color:#fff;">DevCut: Activate</strong></span>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:10px 0;">
+                  <span style="display:inline-block;width:24px;height:24px;background:#58a6ff;color:#0d1117;border-radius:50%;font-size:12px;font-weight:700;text-align:center;line-height:24px;margin-right:12px;">3</span>
+                  <span style="color:#c9d1d9;font-size:14px;">Paste your invite code above → start earning on your next build</span>
+                </td>
+              </tr>
+            </table>
+
+            <!-- CTA -->
+            <div style="text-align:center;margin-bottom:28px;">
+              <a href="https://marketplace.visualstudio.com/items?itemName=gouravgujariya.devcut"
+                 style="display:inline-block;background:#58a6ff;color:#0d1117;font-weight:700;font-size:15px;padding:14px 32px;border-radius:8px;text-decoration:none;letter-spacing:.01em;">
+                Install DevCut Extension →
+              </a>
+            </div>
+
+            <p style="margin:0;font-size:13px;color:#3d4451;line-height:1.6;">
+              Once activated, DevCut shows a single sponsored line in your VS Code status bar while you wait on long-running tasks. You earn ₹ every time an ad is shown. Set your UPI ID to withdraw earnings anytime.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:20px 40px;border-top:1px solid #21262d;text-align:center;">
+            <p style="margin:0;font-size:12px;color:#3d4451;">
+              © 2026 DevCut · <a href="https://devcut.co.in" style="color:#58a6ff;text-decoration:none;">devcut.co.in</a>
+              · <a href="mailto:techsupport@devcut.co.in" style="color:#58a6ff;text-decoration:none;">techsupport@devcut.co.in</a>
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
+// POST /v1/public/signup  — waitlist signup: generate invite code + send email
+app.post("/v1/public/signup", async (req, res) => {
+  const parse = z.object({
+    name:    z.string().min(1).max(120),
+    email:   z.string().email(),
+    role:    z.string().max(64).optional(),
+    github:  z.string().max(64).optional().nullable(),
+    company: z.string().max(120).optional().nullable(),
+  }).safeParse(req.body);
+
+  if (!parse.success) return res.status(400).json({ error: "invalid_body" });
+
+  const { name, email } = parse.data;
+  const normalizedEmail = email.toLowerCase().trim();
+
+  // Check if already signed up
+  const existing = db.prepare("SELECT code FROM beta_invites WHERE email = ?").get(normalizedEmail);
+  if (existing) {
+    // Resend their code
+    if (resend) {
+      await resend.emails.send({
+        from: "DevCut <techsupport@devcut.co.in>",
+        to: normalizedEmail,
+        subject: "Your DevCut invite code (resent)",
+        html: buildInviteEmail(name, existing.code),
+      }).catch(err => console.error("[signup] resend error:", err.message));
+    }
+    return res.json({ ok: true, resent: true });
+  }
+
+  // Generate new invite code
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const seg = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  const code = `DCUT-${seg()}-${seg()}-${seg().slice(0, 2)}`;
+
+  try {
+    db.prepare("INSERT INTO beta_invites (code, email) VALUES (?, ?)").run(code, normalizedEmail);
+  } catch (e) {
+    console.error("[signup] db error:", e.message);
+    return res.status(500).json({ error: "signup_failed" });
+  }
+
+  // Send invite email via Resend
+  if (resend) {
+    const { error } = await resend.emails.send({
+      from: "DevCut <techsupport@devcut.co.in>",
+      to: normalizedEmail,
+      subject: "Your DevCut invite code is here ⚡",
+      html: buildInviteEmail(name, code),
+    }).catch(err => ({ error: err }));
+
+    if (error) {
+      console.error("[signup] resend error:", error?.message || error);
+    }
+  } else {
+    console.warn("[signup] RESEND_API_KEY not set — email not sent for", normalizedEmail, code);
+  }
+
+  console.log(`[signup] new signup email=${normalizedEmail} code=${code}`);
+  res.json({ ok: true });
 });
 
 // ─── Admin API ────────────────────────────────────────────────────────────────
