@@ -1,11 +1,11 @@
 import * as vscode from "vscode";
 import { randomUUID } from "crypto";
 
-const KEY_USER_ID        = "kickbackStatus.localUserId";
-const KEY_TOTAL_PAISE    = "kickbackStatus.totalEarningsPaise";
-const KEY_IMPRESSIONS    = "kickbackStatus.impressionCount";
-const KEY_SERVER_PAISE   = "kickbackStatus.serverBalancePaise";
-const KEY_SERVER_FETCHED = "kickbackStatus.serverBalanceFetchedAt"; // unix ms
+const KEY_USER_ID        = "devcut.localUserId";
+const KEY_TOTAL_PAISE    = "devcut.totalEarningsPaise";
+const KEY_IMPRESSIONS    = "devcut.impressionCount";
+const KEY_SERVER_PAISE   = "devcut.serverBalancePaise";
+const KEY_SERVER_FETCHED = "devcut.serverBalanceFetchedAt"; // unix ms
 
 /**
  * Lightweight local mirror of earnings, so the user gets instant feedback

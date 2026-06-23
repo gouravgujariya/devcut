@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
 
-const SECRET_ACCESS  = "kickbackStatus.accessToken";
-const SECRET_REFRESH = "kickbackStatus.refreshToken";
-const STATE_USER_ID  = "kickbackStatus.userId";
-const STATE_EXPIRES  = "kickbackStatus.accessTokenExpiresAt"; // unix ms
+const SECRET_ACCESS  = "devcut.accessToken";
+const SECRET_REFRESH = "devcut.refreshToken";
+const STATE_USER_ID  = "devcut.userId";
+const STATE_EXPIRES  = "devcut.accessTokenExpiresAt"; // unix ms
 
 export class AuthStore {
   constructor(private context: vscode.ExtensionContext) {}

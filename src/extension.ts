@@ -62,7 +62,7 @@ function shouldTrackCommand(cmd: string): boolean {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  const config = vscode.workspace.getConfiguration("kickbackStatus");
+  const config = vscode.workspace.getConfiguration("devcut");
 
   authStore   = new AuthStore(context);
   earningsStore = new EarningsStore(context);
@@ -76,28 +76,28 @@ export function activate(context: vscode.ExtensionContext) {
   // ── Status bar items ──────────────────────────────────────────────────────
 
   adBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  adBar.name = "Kickback Ad";
-  adBar.command = "kickbackStatus.handleClick";
+  adBar.name = "DevCut Ad";
+  adBar.command = "devcut.handleClick";
   context.subscriptions.push(adBar);
 
   sessionBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
-  sessionBar.name = "Kickback Session Earnings";
-  sessionBar.command = "kickbackStatus.showEarnings";
+  sessionBar.name = "DevCut Session Earnings";
+  sessionBar.command = "devcut.showEarnings";
   sessionBar.tooltip = "Click to see lifetime earnings";
   context.subscriptions.push(sessionBar);
 
   readyBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
-  readyBar.name = "Kickback Ready";
+  readyBar.name = "DevCut Ready";
   readyBar.text = "$(megaphone)";
-  readyBar.tooltip = "Kickback Status — click to test ad";
-  readyBar.command = "kickbackStatus.testAd";
+  readyBar.tooltip = "DevCut — click to test ad";
+  readyBar.command = "devcut.testAd";
   context.subscriptions.push(readyBar);
   readyBar.show();
 
   // ── Commands ──────────────────────────────────────────────────────────────
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.handleClick", async () => {
+    vscode.commands.registerCommand("devcut.handleClick", async () => {
       const line = activeRotator?.getCurrentLine();
       if (line) {
         await sponsorClient.recordClick(line.id);
@@ -107,7 +107,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.showEarnings", () => {
+    vscode.commands.registerCommand("devcut.showEarnings", () => {
       const localRupees = earningsStore.getTotalEarningsPaise() / 100;
       const impressions = earningsStore.getImpressionCount();
       const serverPaise = earningsStore.getServerBalance();
@@ -116,40 +116,40 @@ export function activate(context: vscode.ExtensionContext) {
         const fetchedAt = earningsStore.getServerBalanceFetchedAt();
         const minsAgo = Math.round((Date.now() - fetchedAt) / 60000);
         vscode.window.showInformationMessage(
-          `Kickback Status — Server-verified: ₹${serverRupees} (synced ${minsAgo}m ago). ` +
+          `DevCut — Server-verified: ₹${serverRupees} (synced ${minsAgo}m ago). ` +
           `Local tally: ₹${localRupees.toFixed(2)} across ${impressions} impressions.`
         );
       } else {
         vscode.window.showInformationMessage(
-          `Kickback Status — Lifetime earnings: ₹${localRupees.toFixed(2)} across ${impressions} impressions.`
+          `DevCut — Lifetime earnings: ₹${localRupees.toFixed(2)} across ${impressions} impressions.`
         );
       }
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.syncEarnings", async () => {
+    vscode.commands.registerCommand("devcut.syncEarnings", async () => {
       const result = await sponsorClient.fetchEarnings();
       if (!result) {
-        vscode.window.showWarningMessage("Kickback Status: Could not reach the backend to sync earnings.");
+        vscode.window.showWarningMessage("DevCut: Could not reach the backend to sync earnings.");
         return;
       }
       earningsStore.setServerBalance(result.totalPaise);
       const rupees = (result.totalPaise / 100).toFixed(2);
       vscode.window.showInformationMessage(
-        `Kickback Status — Server-verified: ₹${rupees} across ${result.impressionCount} impressions.`
+        `DevCut — Server-verified: ₹${rupees} across ${result.impressionCount} impressions.`
       );
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.openSettings", () => {
-      vscode.commands.executeCommand("workbench.action.openSettings", "kickbackStatus");
+    vscode.commands.registerCommand("devcut.openSettings", () => {
+      vscode.commands.executeCommand("workbench.action.openSettings", "devcut");
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.testAd", () => {
+    vscode.commands.registerCommand("devcut.testAd", () => {
       onLongRunningStart(context, "npm");
       setTimeout(() => onLongRunningEnd(), 10_000);
     })
@@ -158,10 +158,10 @@ export function activate(context: vscode.ExtensionContext) {
   // ── Activate with invite code ─────────────────────────────────────────────
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.activate", async () => {
+    vscode.commands.registerCommand("devcut.activate", async () => {
       const code = await vscode.window.showInputBox({
-        prompt: "Enter your Kickback Status invite code",
-        placeHolder: "KICK-XXXX-XXXX-XX",
+        prompt: "Enter your DevCut invite code",
+        placeHolder: "DCUT-XXXX-XXXX-XX",
         ignoreFocusOut: true,
       });
       if (!code) return;
@@ -170,14 +170,14 @@ export function activate(context: vscode.ExtensionContext) {
         const result = await sponsorClient.register(code.trim().toUpperCase());
         await authStore.setTokens(result.accessToken, result.refreshToken, result.userId);
         vscode.window.showInformationMessage(
-          "Kickback Status activated! You will start earning on your next build."
+          "DevCut activated! You will start earning on your next build."
         );
       } catch (err: any) {
         const msg = err?.message || "unknown error";
         vscode.window.showErrorMessage(
           msg === "invalid_or_used_code"
-            ? "Invalid or already-used invite code. Contact the Kickback team."
-            : `Kickback Status: activation failed — ${msg}`
+            ? "Invalid or already-used invite code. Contact the DevCut team."
+            : `DevCut: activation failed — ${msg}`
         );
       }
     })
@@ -186,10 +186,10 @@ export function activate(context: vscode.ExtensionContext) {
   // ── Sign in with invite code (returning users) ────────────────────────────
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.login", async () => {
+    vscode.commands.registerCommand("devcut.login", async () => {
       const code = await vscode.window.showInputBox({
-        prompt: "Enter your Kickback Status invite code to sign back in",
-        placeHolder: "KICK-XXXX-XXXX-XX",
+        prompt: "Enter your DevCut invite code to sign back in",
+        placeHolder: "DCUT-XXXX-XXXX-XX",
         ignoreFocusOut: true,
       });
       if (!code) return;
@@ -198,7 +198,7 @@ export function activate(context: vscode.ExtensionContext) {
         const result = await sponsorClient.login(code.trim().toUpperCase());
         await authStore.setTokens(result.accessToken, result.refreshToken, result.userId);
         vscode.window.showInformationMessage(
-          "Kickback Status: Signed in successfully! You will resume earning on your next build."
+          "DevCut: Signed in successfully! You will resume earning on your next build."
         );
       } catch (err: any) {
         const msg = err?.message || "unknown error";
@@ -206,8 +206,8 @@ export function activate(context: vscode.ExtensionContext) {
           msg === "invalid_code"
             ? "Invalid invite code. Use the same code you registered with."
             : msg === "account_revoked"
-            ? "Your account has been revoked. Contact the Kickback team."
-            : `Kickback Status: sign-in failed — ${msg}`
+            ? "Your account has been revoked. Contact the DevCut team."
+            : `DevCut: sign-in failed — ${msg}`
         );
       }
     })
@@ -216,7 +216,7 @@ export function activate(context: vscode.ExtensionContext) {
   // ── Set UPI ID ────────────────────────────────────────────────────────────
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.setUpiId", async () => {
+    vscode.commands.registerCommand("devcut.setUpiId", async () => {
       const upiId = await vscode.window.showInputBox({
         prompt: "Enter your UPI ID for earnings payout",
         placeHolder: "yourname@upi or phone@paytm",
@@ -229,7 +229,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (ok) {
         vscode.window.showInformationMessage(`UPI ID saved: ${upiId.trim()}. Earnings will be sent here.`);
       } else {
-        vscode.window.showErrorMessage("Kickback Status: Could not save UPI ID. Are you registered?");
+        vscode.window.showErrorMessage("DevCut: Could not save UPI ID. Are you registered?");
       }
     })
   );
@@ -237,10 +237,10 @@ export function activate(context: vscode.ExtensionContext) {
   // ── Request withdrawal ────────────────────────────────────────────────────
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.withdraw", async () => {
+    vscode.commands.registerCommand("devcut.withdraw", async () => {
       const result = await sponsorClient.requestWithdrawal();
       if (!result) {
-        vscode.window.showErrorMessage("Kickback Status: Could not reach backend. Try again.");
+        vscode.window.showErrorMessage("DevCut: Could not reach backend. Try again.");
         return;
       }
       if (result.error === "upi_not_set") {
@@ -249,7 +249,7 @@ export function activate(context: vscode.ExtensionContext) {
           "Set UPI ID"
         );
         if (action === "Set UPI ID") {
-          vscode.commands.executeCommand("kickbackStatus.setUpiId");
+          vscode.commands.executeCommand("devcut.setUpiId");
         }
         return;
       }
@@ -273,7 +273,7 @@ export function activate(context: vscode.ExtensionContext) {
   // ── Team Pool ─────────────────────────────────────────────────────────────
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.createTeam", async () => {
+    vscode.commands.registerCommand("devcut.createTeam", async () => {
       const name = await vscode.window.showInputBox({
         prompt: "Team name (e.g. your startup or bootcamp cohort name)",
         placeHolder: "100xDevs Cohort 10",
@@ -284,7 +284,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       const result = await sponsorClient.createTeam(name.trim());
       if (!result) {
-        vscode.window.showErrorMessage("Kickback Status: Could not create team. Are you registered?");
+        vscode.window.showErrorMessage("DevCut: Could not create team. Are you registered?");
         return;
       }
       if (result.error === "already_in_team") {
@@ -300,7 +300,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.joinTeam", async () => {
+    vscode.commands.registerCommand("devcut.joinTeam", async () => {
       const code = await vscode.window.showInputBox({
         prompt: "Enter the 6-character team code",
         placeHolder: "AB1234",
@@ -311,7 +311,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       const result = await sponsorClient.joinTeam(code.trim().toUpperCase());
       if (!result) {
-        vscode.window.showErrorMessage("Kickback Status: Could not reach backend. Try again.");
+        vscode.window.showErrorMessage("DevCut: Could not reach backend. Try again.");
         return;
       }
       if (result.error === "team_not_found") {
@@ -333,10 +333,10 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("kickbackStatus.showTeam", async () => {
+    vscode.commands.registerCommand("devcut.showTeam", async () => {
       const info = await sponsorClient.fetchTeamInfo();
       if (info === undefined) {
-        vscode.window.showErrorMessage("Kickback Status: Could not reach backend.");
+        vscode.window.showErrorMessage("DevCut: Could not reach backend.");
         return;
       }
       if (info === null) {
@@ -344,8 +344,8 @@ export function activate(context: vscode.ExtensionContext) {
           "You are not in a team pool.",
           "Create Team", "Join Team"
         );
-        if (action === "Create Team") vscode.commands.executeCommand("kickbackStatus.createTeam");
-        if (action === "Join Team")   vscode.commands.executeCommand("kickbackStatus.joinTeam");
+        if (action === "Create Team") vscode.commands.executeCommand("devcut.createTeam");
+        if (action === "Join Team")   vscode.commands.executeCommand("devcut.joinTeam");
         return;
       }
       const total = (info.teamTotalPaise / 100).toFixed(2);
@@ -421,11 +421,11 @@ export function activate(context: vscode.ExtensionContext) {
         await authStore.setRefreshToken(result.refreshToken);
       } else {
         const action = await vscode.window.showWarningMessage(
-          "Kickback Status: Session expired. Re-enter your invite code to continue earning.",
+          "DevCut: Session expired. Re-enter your invite code to continue earning.",
           "Re-activate"
         );
         if (action === "Re-activate") {
-          vscode.commands.executeCommand("kickbackStatus.activate");
+          vscode.commands.executeCommand("devcut.activate");
         }
       }
     });
@@ -441,7 +441,7 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 function onLongRunningStart(context: vscode.ExtensionContext, taskType?: string) {
-  const config = vscode.workspace.getConfiguration("kickbackStatus");
+  const config = vscode.workspace.getConfiguration("devcut");
   if (!config.get<boolean>("enabled", true)) return;
 
   activeTaskCount++;

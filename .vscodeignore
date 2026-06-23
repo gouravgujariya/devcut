@@ -1,0 +1,40 @@
+# Source (compiled output in out/ is what we need)
+src/
+
+# Secrets — NEVER ship these
+.env
+.env.*
+*.pem
+*.key
+
+# Server backend (not part of the extension)
+server/
+
+# Landing pages & docs
+landing/
+docs/
+
+# Dev files
+.vscode/
+.github/
+.claude/
+graphify-out/
+scripts/
+tsconfig.json
+railway.toml
+competition.ini
+howtouse.md
+INDIA-STRATEGY.md
+SCALE-PLAN.md
+
+# Images (not used in extension UI)
+*.png
+*.jpg
+*.jpeg
+
+# Build artifacts
+*.js.map
+
+# Misc
+node_modules/
+.gitignore

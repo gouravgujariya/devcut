@@ -572,12 +572,12 @@ app.get("/admin", (req, res) => {
 function generateInviteCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const seg = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-  return `KICK-${seg()}-${seg()}-${seg().slice(0, 2)}`;
+  return `DCUT-${seg()}-${seg()}-${seg().slice(0, 2)}`;
 }
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`\nKickback Status backend running at http://localhost:${PORT}`);
+  console.log(`\nDevCut backend running at http://localhost:${PORT}`);
   console.log(`Admin dashboard: http://localhost:${PORT}/admin`);
   console.log(`Public stats:    http://localhost:${PORT}/v1/public/stats\n`);
 });

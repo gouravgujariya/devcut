@@ -1,9 +1,10 @@
 {
-  "name": "kickback-status",
-  "displayName": "Kickback Status — Get Paid for Waiting",
+  "name": "devcut",
+  "displayName": "DevCut — Get Paid for Waiting",
   "description": "Shows a sponsored line in your status bar while you wait on builds, installs, and tests. You get a share of the revenue.",
-  "version": "0.0.1",
-  "publisher": "your-publisher-id",
+  "version": "0.1.0",
+  "publisher": "gouravgujariya",
+  "repository": { "type": "git", "url": "https://github.com/gouravgujariya/waitwage" },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -13,70 +14,70 @@
   "contributes": {
     "commands": [
       {
-        "command": "kickbackStatus.activate",
-        "title": "Kickback Status: Activate with Invite Code"
+        "command": "devcut.activate",
+        "title": "DevCut: Activate with Invite Code"
       },
       {
-        "command": "kickbackStatus.showEarnings",
-        "title": "Kickback Status: Show My Earnings"
+        "command": "devcut.showEarnings",
+        "title": "DevCut: Show My Earnings"
       },
       {
-        "command": "kickbackStatus.syncEarnings",
-        "title": "Kickback Status: Sync Earnings from Server"
+        "command": "devcut.syncEarnings",
+        "title": "DevCut: Sync Earnings from Server"
       },
       {
-        "command": "kickbackStatus.setUpiId",
-        "title": "Kickback Status: Set Payout UPI ID"
+        "command": "devcut.setUpiId",
+        "title": "DevCut: Set Payout UPI ID"
       },
       {
-        "command": "kickbackStatus.withdraw",
-        "title": "Kickback Status: Withdraw Earnings to UPI"
+        "command": "devcut.withdraw",
+        "title": "DevCut: Withdraw Earnings to UPI"
       },
       {
-        "command": "kickbackStatus.createTeam",
-        "title": "Kickback Status: Create Team Pool"
+        "command": "devcut.createTeam",
+        "title": "DevCut: Create Team Pool"
       },
       {
-        "command": "kickbackStatus.joinTeam",
-        "title": "Kickback Status: Join Team Pool"
+        "command": "devcut.joinTeam",
+        "title": "DevCut: Join Team Pool"
       },
       {
-        "command": "kickbackStatus.showTeam",
-        "title": "Kickback Status: Show Team Leaderboard"
+        "command": "devcut.showTeam",
+        "title": "DevCut: Show Team Leaderboard"
       },
       {
-        "command": "kickbackStatus.openSettings",
-        "title": "Kickback Status: Open Settings"
+        "command": "devcut.openSettings",
+        "title": "DevCut: Open Settings"
       },
       {
-        "command": "kickbackStatus.testAd",
-        "title": "Kickback Status: Test Ad (10s demo)"
+        "command": "devcut.testAd",
+        "title": "DevCut: Test Ad (10s demo)"
       }
     ],
     "configuration": {
-      "title": "Kickback Status",
+      "title": "DevCut",
       "properties": {
-        "kickbackStatus.backendUrl": {
+        "devcut.backendUrl": {
           "type": "string",
           "default": "https://waitwage-production.up.railway.app",
           "description": "Backend URL that serves the current sponsor line and records impressions."
         },
-        "kickbackStatus.enabled": {
+        "devcut.enabled": {
           "type": "boolean",
           "default": true,
           "description": "Show sponsored status bar messages during long-running tasks."
         },
-        "kickbackStatus.minTaskSeconds": {
+        "devcut.minTaskSeconds": {
           "type": "number",
           "default": 3,
           "description": "Minimum task duration (seconds) before a sponsored line is shown. Avoids flicker on instant tasks."
         },
-        "kickbackStatus.adRotationSeconds": {
+        "devcut.adRotationSeconds": {
           "type": "number",
           "default": 30,
           "description": "Seconds between ad rotations during a long-running task. Each rotation is a new impression."
         },
-        "kickbackStatus.earningsFlashSeconds": {
+        "devcut.earningsFlashSeconds": {
           "type": "number",
           "default": 4,
           "description": "Seconds the post-task 'Earned ₹X.XX this build' message stays visible before hiding."
