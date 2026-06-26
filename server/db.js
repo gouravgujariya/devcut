@@ -107,4 +107,38 @@ for (const sql of migrations) {
 try { db.exec("ALTER TABLE sponsors ADD COLUMN bid_paise INTEGER NOT NULL DEFAULT 42"); } catch (_) {}
 try { db.exec("ALTER TABLE sponsors ADD COLUMN budget_paise_daily INTEGER"); } catch (_) {}
 
+// Store payout_paise per impression so earnings survive sponsor deletion
+try { db.exec("ALTER TABLE impressions ADD COLUMN payout_paise INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+// Backfill existing impressions that still have a live sponsor row
+db.exec(`UPDATE impressions SET payout_paise = (
+  SELECT COALESCE(s.payout_paise, 0) FROM sponsors s WHERE s.id = impressions.sponsor_id
+) WHERE payout_paise = 0 AND sponsor_id IN (SELECT id FROM sponsors)`);
+
+// Indexes for high-traffic queries (earnings, budget checks, token lookup)
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_impressions_user    ON impressions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_impressions_ts      ON impressions(ts);
+  CREATE INDEX IF NOT EXISTS idx_impressions_sponsor ON impressions(sponsor_id);
+  CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+`);
+
+// Advertiser inquiries submitted via the landing page
+db.exec(`
+  CREATE TABLE IF NOT EXISTS advertiser_inquiries (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    company         TEXT NOT NULL,
+    contact_name    TEXT NOT NULL,
+    email           TEXT NOT NULL,
+    website         TEXT,
+    ad_text         TEXT NOT NULL,
+    destination_url TEXT NOT NULL,
+    budget_range    TEXT NOT NULL,
+    slot_type       TEXT NOT NULL,
+    product_type    TEXT,
+    notes           TEXT,
+    status          TEXT NOT NULL DEFAULT 'new',
+    created_at      INTEGER NOT NULL DEFAULT (unixepoch())
+  )
+`);
+
 module.exports = db;

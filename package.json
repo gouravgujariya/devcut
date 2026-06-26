@@ -47,6 +47,10 @@
         "title": "DevCut: Show Team Leaderboard"
       },
       {
+        "command": "devcut.login",
+        "title": "DevCut: Sign In (returning user)"
+      },
+      {
         "command": "devcut.openSettings",
         "title": "DevCut: Open Settings"
       },
