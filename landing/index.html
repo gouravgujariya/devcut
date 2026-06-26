@@ -1007,6 +1007,18 @@
     <p style="color:var(--green);font-size:.82rem;margin-bottom:2rem;font-weight:600;">
       <span id="earlyCount">—</span> spots remaining
     </p>
+    <script>
+      // Fetch count as soon as this element parses — no waiting for the rest of the page
+      (function() {
+        const el = document.getElementById('earlyCount');
+        fetch('https://waitwage-production.up.railway.app/v1/public/stats', {
+          cache: 'no-store', signal: AbortSignal.timeout(5000)
+        }).then(r => r.json()).then(d => {
+          const used = d.totalSignups || 0;
+          el.textContent = Math.max(0, 500 - used) + ' of 500';
+        }).catch(() => {}); // keep '—' on error, form IIFE will retry
+      })();
+    </script>
 
     <form id="earlyForm" style="display:flex;flex-direction:column;gap:1rem;">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
@@ -1274,7 +1286,6 @@ setInterval(() => {
   /* fetch current sign-up count */
   async function fetchCount() {
     try {
-      countEl.textContent = '…'; // ponytail: visual swap so stale value isn't silently kept
       const res = await fetch(`${BACKEND}/v1/public/stats`, {
         cache: 'no-store',
         signal: AbortSignal.timeout(4000),
@@ -1283,7 +1294,7 @@ setInterval(() => {
       const used = data.totalSignups || 0;
       const remaining = Math.max(0, TOTAL_SPOTS - used);
       countEl.textContent = remaining + ' of ' + TOTAL_SPOTS;
-    } catch { countEl.textContent = TOTAL_SPOTS + ' of ' + TOTAL_SPOTS; }
+    } catch { /* keep current value */ }
   }
   fetchCount();
 
