@@ -23,6 +23,8 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+// Landing pages at /site/ — doesn't collide with admin panel at /
+app.use("/site", express.static(path.join(__dirname, "..", "landing")));
 
 // ─── Public extension API (/v1/) ──────────────────────────────────────────────
 
@@ -522,15 +524,17 @@ app.post("/v1/public/signup", async (req, res) => {
   const existing = db.prepare("SELECT code FROM beta_invites WHERE email = ?").get(normalizedEmail);
   if (existing) {
     // Resend their code
+    let email_sent = false;
     if (resend) {
-      await resend.emails.send({
+      const result = await resend.emails.send({
         from: "DevCut <techsupport@devcut.co.in>",
         to: normalizedEmail,
         subject: "Your DevCut invite code (resent)",
         html: buildInviteEmail(name, existing.code),
-      }).catch(err => console.error("[signup] resend error:", err.message));
+      }).catch(err => { console.error("[signup] resend error:", err.message); return null; });
+      email_sent = !!(result && !result.error);
     }
-    return res.json({ ok: true, resent: true });
+    return res.json({ ok: true, resent: true, email_sent });
   }
 
   // Generate new invite code
@@ -546,6 +550,7 @@ app.post("/v1/public/signup", async (req, res) => {
   }
 
   // Send invite email via Resend
+  let email_sent = false;
   if (resend) {
     const { error } = await resend.emails.send({
       from: "DevCut <techsupport@devcut.co.in>",
@@ -556,13 +561,15 @@ app.post("/v1/public/signup", async (req, res) => {
 
     if (error) {
       console.error("[signup] resend error:", error?.message || error);
+    } else {
+      email_sent = true;
     }
   } else {
     console.warn("[signup] RESEND_API_KEY not set — email not sent for", normalizedEmail, code);
   }
 
   console.log(`[signup] new signup email=${normalizedEmail} code=${code}`);
-  res.json({ ok: true });
+  res.json({ ok: true, email_sent, ...(!email_sent && { note: "Email delivery pending" }) });
 });
 
 // POST /v1/public/advertiser-inquiry  — advertiser sign-up form (no auth)

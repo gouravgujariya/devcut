@@ -1042,9 +1042,9 @@
     </form>
 
     <div id="formSuccess" style="display:none;margin-top:1.5rem;padding:1.2rem;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);border-radius:12px;">
-      <div style="font-size:1.8rem;margin-bottom:.4rem;">🎉</div>
-      <div style="font-weight:700;color:var(--green);font-size:1.05rem;">You're on the list!</div>
-      <div style="color:var(--muted);font-size:.9rem;margin-top:.4rem;">We'll reach out to you personally before the public launch.</div>
+      <div style="font-size:1.8rem;margin-bottom:.4rem;" id="successIcon">🎉</div>
+      <div style="font-weight:700;color:var(--green);font-size:1.05rem;" id="successTitle">You're on the list!</div>
+      <div style="color:var(--muted);font-size:.9rem;margin-top:.4rem;" id="successMsg">Check your inbox — your invite code is on its way.</div>
     </div>
     <div id="formError" style="display:none;margin-top:1rem;color:var(--orange);font-size:.88rem;"></div>
   </div>
@@ -1274,7 +1274,11 @@ setInterval(() => {
   /* fetch current sign-up count */
   async function fetchCount() {
     try {
-      const res = await fetch(`${BACKEND}/v1/public/stats`);
+      countEl.textContent = '…'; // ponytail: visual swap so stale value isn't silently kept
+      const res = await fetch(`${BACKEND}/v1/public/stats`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(4000),
+      });
       const data = await res.json();
       const used = data.totalSignups || 0;
       const remaining = Math.max(0, TOTAL_SPOTS - used);
@@ -1308,10 +1312,20 @@ setInterval(() => {
 
       if (res.ok) {
         form.style.display = 'none';
+        // Tailor message based on what backend reported
+        if (body.resent) {
+          document.getElementById('successIcon').textContent = '📬';
+          document.getElementById('successTitle').textContent = 'Already registered!';
+          document.getElementById('successMsg').textContent = body.email_sent
+            ? 'We resent your invite code — check your inbox.'
+            : 'You\'re on the list. Invite code coming soon.';
+        } else if (!body.email_sent) {
+          document.getElementById('successMsg').textContent = 'You\'re registered! Your invite code will be emailed to you shortly.';
+        }
         successEl.style.display = 'block';
         fetchCount();
       } else {
-        throw new Error(body.message || 'Something went wrong. Please try again.');
+        throw new Error(body.error || body.message || 'Something went wrong. Please try again.');
       }
     } catch (err) {
       errorEl.textContent = err.message;
