@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Advertise to Developers — DevCut</title>
+  <meta name="description" content="Reach 500+ verified Indian developers at peak attention — during builds, tests, and deploys. ₹500 minimum. UPI billing. No middlemen." />
+  <link rel="stylesheet" href="shared.css" />
+  <style>
+    /* ── Page-specific overrides ── */
+    .section-label { color: var(--blue); }
+
+    h1 { font-size: clamp(2.4rem, 6vw, 4.2rem); font-weight: 900; line-height: 1.06; letter-spacing: -.04em; max-width: 820px; }
+    h1 .hl-blue   { background: linear-gradient(135deg, #58a6ff 0%, #bc8cff 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-size: 200% auto; animation: gradient-shift 4s linear infinite; }
+    h1 .hl-green  { background: linear-gradient(135deg, #00e676 0%, #64ffda 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+    .hero { min-height: 95vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 9rem 2rem 5rem; }
+    .hero-sub { margin-top: 1.4rem; font-size: 1.15rem; color: var(--muted); max-width: 560px; line-height: 1.65; }
+    .hero-pills { display: flex; gap: .7rem; flex-wrap: wrap; justify-content: center; margin-top: 2rem; }
+    .pill { display: flex; align-items: center; gap: .45rem; font-size: .78rem; font-weight: 600; padding: .35rem .85rem; border-radius: 100px; border: 1px solid; letter-spacing: .01em; }
+    .pill-blue   { background: rgba(88,166,255,.08);  border-color: rgba(88,166,255,.25); color: var(--blue); }
+    .pill-green  { background: rgba(0,230,118,.07);   border-color: rgba(0,230,118,.22);  color: var(--green); }
+    .pill-purple { background: rgba(188,140,255,.08); border-color: rgba(188,140,255,.25); color: var(--purple); }
+
+    /* ── vs-other comparison bar ── */
+    .vs-bar { display: grid; grid-template-columns: 1fr auto 1fr; gap: 0; align-items: center; margin: 3rem auto 0; max-width: 740px; }
+    .vs-side { background: var(--surface2); border: 1px solid var(--border); border-radius: 14px; padding: 1.4rem 1.8rem; }
+    .vs-side.bad  { opacity: .55; }
+    .vs-side.good { border-color: rgba(88,166,255,.4); box-shadow: 0 0 30px rgba(88,166,255,.08); }
+    .vs-label { font-size: .72rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; margin-bottom: .6rem; }
+    .vs-label.bad-lbl  { color: var(--muted); }
+    .vs-label.good-lbl { color: var(--blue); }
+    .vs-item { font-size: .85rem; color: var(--muted); padding: .28rem 0; display: flex; align-items: center; gap: .5rem; }
+    .vs-item .icon { font-size: .9rem; }
+    .vs-divider { display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 1.1rem; color: var(--muted); padding: 0 1rem; }
+
+    /* ── why cards ── */
+    .why-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; margin-top: 3rem; }
+    .why-card {
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 16px; padding: 1.8rem 1.6rem;
+      position: relative; overflow: hidden;
+      transition: transform .22s, border-color .22s, box-shadow .22s;
+    }
+    .why-card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--card-accent, var(--blue)), transparent);
+      opacity: 0; transition: opacity .3s;
+    }
+    .why-card:hover { transform: translateY(-5px); box-shadow: 0 16px 48px rgba(0,0,0,.3); }
+    .why-card:hover::before { opacity: 1; }
+    .why-card:hover { border-color: var(--card-accent, var(--blue)); }
+    .why-icon { font-size: 2rem; margin-bottom: .9rem; display: block; }
+    .why-card h3 { font-size: 1rem; font-weight: 700; margin-bottom: .5rem; }
+    .why-card p  { color: var(--muted); font-size: .87rem; line-height: 1.55; }
+    .why-card .card-stat { font-size: 1.6rem; font-weight: 900; color: var(--card-accent, var(--blue)); margin-top: .8rem; display: block; }
+
+    /* ── pricing ── */
+    .pricing-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.5rem; margin-top: 3rem; align-items: start; }
+    .price-card {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 18px; padding: 2rem 1.8rem; position: relative;
+      transition: transform .22s, box-shadow .22s;
+    }
+    .price-card:hover { transform: translateY(-4px); box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+    .price-card.featured {
+      border-color: rgba(88,166,255,.5);
+      box-shadow: 0 0 0 1px rgba(88,166,255,.2), 0 24px 60px rgba(88,166,255,.1);
+    }
+    .price-badge {
+      position: absolute; top: -12px; left: 50%; transform: translateX(-50%);
+      background: var(--blue); color: #000; font-size: .72rem; font-weight: 800;
+      padding: .3rem .9rem; border-radius: 100px; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap;
+    }
+    .price-tier { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .12em; color: var(--muted); margin-bottom: .6rem; }
+    .price-amount { font-size: 2.8rem; font-weight: 900; letter-spacing: -.04em; line-height: 1; }
+    .price-amount sub { font-size: 1rem; vertical-align: baseline; color: var(--muted); font-weight: 400; letter-spacing: 0; }
+    .price-desc { color: var(--muted); font-size: .88rem; margin: .8rem 0 1.4rem; line-height: 1.5; }
+    .price-list { list-style: none; display: flex; flex-direction: column; gap: .55rem; margin-bottom: 1.8rem; }
+    .price-list li { font-size: .88rem; color: var(--muted); display: flex; align-items: flex-start; gap: .6rem; }
+    .price-list li .ck { color: var(--green); font-size: .9rem; flex-shrink: 0; margin-top: .1rem; }
+    .price-list li strong { color: var(--text); }
+    .price-cta {
+      display: block; text-align: center; padding: .75rem; border-radius: 10px;
+      font-weight: 700; font-size: .95rem; text-decoration: none; transition: all .2s; cursor: pointer;
+    }
+    .price-cta.primary { background: var(--blue); color: #000; }
+    .price-cta.primary:hover { box-shadow: 0 8px 30px rgba(88,166,255,.4); transform: translateY(-1px); }
+    .price-cta.outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .price-cta.outline:hover { border-color: var(--blue); color: var(--blue); }
+
+    /* ── Comparison table ── */
+    .compare-table { width: 100%; border-collapse: collapse; font-size: .88rem; margin-top: 2.5rem; }
+    .compare-table th { text-align: left; padding: .8rem 1rem; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+    .compare-table th:not(:first-child) { text-align: center; }
+    .compare-table td { padding: .75rem 1rem; border-bottom: 1px solid rgba(48,54,61,.4); }
+    .compare-table td:not(:first-child) { text-align: center; }
+    .compare-table tbody tr:hover { background: rgba(255,255,255,.02); }
+    .compare-table .col-us { color: var(--blue); font-weight: 700; }
+    .compare-table .yes  { color: var(--green); }
+    .compare-table .no   { color: var(--orange); opacity: .7; }
+    .compare-table .part { color: var(--muted); }
+    .compare-table .head-us { color: var(--blue); }
+
+    /* ── Budget calc ── */
+    .budget-wrap { background: var(--surface2); border: 1px solid var(--border); border-radius: 18px; padding: 2.2rem; margin-top: 2.5rem; }
+    .budget-wrap label { color: var(--muted); font-size: .82rem; display: block; margin-bottom: .4rem; font-weight: 600; letter-spacing: .02em; }
+    .fi { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: .7rem 1rem; color: var(--text); font-size: .95rem; outline: none; transition: border-color .2s; appearance: none; }
+    .fi:focus { border-color: var(--blue); }
+    select.fi { cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%238b949e' d='M6 8L0 0h12z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 1rem center; padding-right: 2.5rem; }
+    select.fi option { background: #1c2128; }
+    .calc-result { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1rem; margin-top: 1.5rem; }
+    .calc-box { text-align: center; padding: 1.1rem .8rem; background: var(--surface); border-radius: 12px; border: 1px solid var(--border); }
+    .calc-box .num { font-size: 2rem; font-weight: 900; line-height: 1; }
+    .calc-box .lbl { color: var(--muted); font-size: .75rem; margin-top: .3rem; }
+
+    /* ── Ad preview / format ── */
+    .format-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2.5rem; margin-top: 2.5rem; }
+    @media (max-width: 700px) { .format-grid { grid-template-columns: 1fr; } }
+    .spec-row { display: flex; justify-content: space-between; align-items: center; padding: .75rem 0; border-bottom: 1px solid rgba(48,54,61,.5); }
+    .spec-row:last-child { border-bottom: none; }
+    .spec-key { color: var(--muted); font-size: .88rem; }
+    .spec-val { font-size: .88rem; font-weight: 600; }
+
+    /* ── Slot type pills ── */
+    .slot-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .slot-card {
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 1.2rem 1.4rem;
+      cursor: pointer; transition: all .2s; user-select: none;
+    }
+    .slot-card:hover, .slot-card.active { border-color: var(--blue); background: rgba(88,166,255,.05); }
+    .slot-card .slot-name { font-weight: 700; font-size: .95rem; margin-bottom: .3rem; }
+    .slot-card .slot-trigger { font-size: .78rem; color: var(--muted); font-family: monospace; }
+    .slot-card .slot-cpm { font-size: .82rem; color: var(--blue); margin-top: .5rem; font-weight: 600; }
+
+    /* ── Inquiry form ── */
+    #get-started { scroll-margin-top: 80px; }
+    .form-wrap {
+      background: linear-gradient(135deg, rgba(88,166,255,.04) 0%, rgba(188,140,255,.04) 100%);
+      border: 1px solid rgba(88,166,255,.2);
+      border-radius: 24px; padding: 3rem 2.5rem;
+      box-shadow: 0 0 80px rgba(88,166,255,.06), 0 32px 80px rgba(0,0,0,.3);
+      position: relative; overflow: hidden;
+    }
+    .form-wrap::before {
+      content: ''; position: absolute; top: -80px; right: -80px;
+      width: 320px; height: 320px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(88,166,255,.12), transparent 70%);
+      pointer-events: none;
+    }
+    .form-wrap::after {
+      content: ''; position: absolute; bottom: -60px; left: -60px;
+      width: 260px; height: 260px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(188,140,255,.1), transparent 70%);
+      pointer-events: none;
+    }
+    .form-header { text-align: center; margin-bottom: 2.5rem; position: relative; z-index: 1; }
+    .form-header h2 { font-size: clamp(1.6rem, 3.5vw, 2.2rem); font-weight: 800; letter-spacing: -.02em; }
+    .form-header p  { color: var(--muted); margin-top: .6rem; font-size: .95rem; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; position: relative; z-index: 1; }
+    @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } .form-wrap { padding: 2rem 1.2rem; } }
+    .form-grid .span-2 { grid-column: 1 / -1; }
+    .field { display: flex; flex-direction: column; gap: .4rem; }
+    .field label { font-size: .8rem; font-weight: 600; color: var(--muted); letter-spacing: .03em; }
+    .field label .req { color: var(--blue); margin-left: .15rem; }
+    .field input, .field select, .field textarea {
+      background: rgba(13,17,23,.8); border: 1px solid rgba(48,54,61,.8);
+      border-radius: 10px; padding: .75rem 1rem; color: var(--text);
+      font-size: .95rem; outline: none; transition: border-color .2s, box-shadow .2s;
+      font-family: inherit; width: 100%;
+    }
+    .field input:focus, .field select:focus, .field textarea:focus {
+      border-color: var(--blue); box-shadow: 0 0 0 3px rgba(88,166,255,.12);
+    }
+    .field input::placeholder, .field textarea::placeholder { color: rgba(139,148,158,.5); }
+    .field select { appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='7' viewBox='0 0 12 7'%3E%3Cpath fill='%238b949e' d='M6 7L0 0h12z'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 1rem center; padding-right: 2.5rem; }
+    .field select option { background: #1c2128; }
+    .field textarea { resize: vertical; min-height: 100px; line-height: 1.5; }
+    .char-hint { font-size: .75rem; color: var(--muted); text-align: right; margin-top: .25rem; }
+    .char-hint .over { color: var(--orange); }
+
+    /* Live preview inside form */
+    .preview-label { font-size: .78rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-bottom: .6rem; }
+    .mini-statusbar {
+      background: #007acc; height: 24px; border-radius: 0 0 8px 8px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 .8rem; font-size: .7rem;
+    }
+    .mini-ad { display: flex; align-items: center; gap: .35rem; background: rgba(0,0,0,.3); border-radius: 4px; padding: .1rem .55rem; color: #fff; font-weight: 600; max-width: 280px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+    /* Budget slider */
+    .budget-slider-wrap { display: flex; flex-direction: column; gap: .5rem; }
+    .budget-track { display: flex; justify-content: space-between; margin-top: .3rem; }
+    .budget-track span { font-size: .7rem; color: var(--muted); }
+    input[type="range"].budget-range {
+      -webkit-appearance: none; width: 100%; height: 6px;
+      background: linear-gradient(to right, var(--blue) 0%, var(--blue) var(--pct, 25%), rgba(48,54,61,.8) var(--pct, 25%));
+      border-radius: 3px; outline: none; cursor: pointer; border: none; padding: 0;
+    }
+    input[type="range"].budget-range::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 20px; height: 20px; border-radius: 50%;
+      background: var(--blue); box-shadow: 0 0 0 4px rgba(88,166,255,.2); cursor: pointer;
+      transition: box-shadow .15s;
+    }
+    input[type="range"].budget-range::-webkit-slider-thumb:hover { box-shadow: 0 0 0 6px rgba(88,166,255,.3); }
+    .budget-display { font-size: 1.5rem; font-weight: 900; color: var(--blue); }
+
+    /* Submit button */
+    .submit-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: .5rem; }
+    #submitInquiry {
+      flex: 1; min-width: 200px; padding: .9rem 2rem; border: none; border-radius: 12px;
+      background: linear-gradient(135deg, var(--blue) 0%, var(--purple) 100%);
+      color: #fff; font-weight: 800; font-size: 1.05rem; cursor: pointer;
+      transition: opacity .2s, transform .15s, box-shadow .2s;
+      letter-spacing: .01em; position: relative; overflow: hidden;
+    }
+    #submitInquiry:hover:not(:disabled) { opacity: .9; transform: translateY(-2px); box-shadow: 0 12px 40px rgba(88,166,255,.35); }
+    #submitInquiry:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+    .submit-note { font-size: .78rem; color: var(--muted); line-height: 1.5; }
+    .form-success {
+      display: none; text-align: center; padding: 2.5rem 1.5rem;
+      background: rgba(0,230,118,.05); border: 1px solid rgba(0,230,118,.2);
+      border-radius: 16px; margin-top: 1.5rem;
+    }
+    .form-success .big-icon { font-size: 3rem; display: block; margin-bottom: 1rem; }
+    .form-success h3 { font-size: 1.3rem; font-weight: 800; margin-bottom: .5rem; }
+    .form-success p { color: var(--muted); font-size: .92rem; }
+    .form-error { color: var(--orange); font-size: .85rem; padding: .7rem 1rem; background: rgba(247,129,102,.08); border: 1px solid rgba(247,129,102,.2); border-radius: 8px; display: none; margin-top: .5rem; }
+
+    /* ── FAQ ── */
+    .faq-list { display: flex; flex-direction: column; gap: .8rem; margin-top: 2rem; }
+    .faq-item { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .faq-q {
+      width: 100%; text-align: left; padding: 1.1rem 1.4rem; background: none; border: none;
+      color: var(--text); font-size: .95rem; font-weight: 600; cursor: pointer;
+      display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+      transition: color .2s;
+    }
+    .faq-q:hover { color: var(--blue); }
+    .faq-q .chevron { flex-shrink: 0; transition: transform .25s; color: var(--muted); }
+    .faq-a { max-height: 0; overflow: hidden; transition: max-height .3s ease, padding .3s; padding: 0 1.4rem; }
+    .faq-a p { color: var(--muted); font-size: .88rem; line-height: 1.65; padding-bottom: 1.1rem; }
+    .faq-item.open .faq-q .chevron { transform: rotate(180deg); }
+    .faq-item.open .faq-a { max-width: none; max-height: 400px; }
+
+    /* ── Contact strip ── */
+    .contact-strip {
+      background: linear-gradient(135deg, rgba(88,166,255,.06) 0%, rgba(188,140,255,.06) 100%);
+      border: 1px solid rgba(88,166,255,.15); border-radius: 20px;
+      padding: 3rem 2rem; text-align: center; margin-top: 4rem;
+    }
+    .contact-strip h3 { font-size: 1.6rem; font-weight: 800; margin-bottom: .6rem; }
+    .contact-strip p  { color: var(--muted); max-width: 480px; margin: 0 auto 1.8rem; font-size: .95rem; line-height: 1.6; }
+    .contact-strip .contact-methods { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+    .contact-method {
+      display: flex; align-items: center; gap: .6rem;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
+      padding: .75rem 1.3rem; color: var(--text); font-size: .9rem; font-weight: 600;
+      text-decoration: none; transition: all .2s;
+    }
+    .contact-method:hover { border-color: var(--blue); color: var(--blue); transform: translateY(-2px); }
+
+    /* ── Bid table ── */
+    .bid-table { width: 100%; border-collapse: collapse; margin-top: 2rem; font-size: .88rem; }
+    .bid-table th { text-align: left; padding: .75rem 1rem; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+    .bid-table th:not(:first-child) { text-align: center; }
+    .bid-table td { padding: .75rem 1rem; border-bottom: 1px solid rgba(48,54,61,.4); }
+    .bid-table td:not(:first-child) { text-align: center; }
+    .bid-table tbody tr:hover { background: rgba(255,255,255,.02); }
+    .badge-slot { display: inline-block; padding: .2rem .65rem; border-radius: 100px; font-size: .72rem; font-weight: 700; }
+    .badge-prime  { background: rgba(88,166,255,.12); color: var(--blue); }
+    .badge-active { background: rgba(0,230,118,.1); color: var(--green); }
+    .badge-soon   { background: rgba(139,148,158,.1); color: var(--muted); }
+
+    /* ── Animate on scroll ── */
+    .reveal { opacity: 0; transform: translateY(24px); transition: opacity .55s ease, transform .55s ease; }
+    .reveal.visible { opacity: 1; transform: none; }
+  </style>
+</head>
+<body>
+
+<div class="orb-container">
+  <div class="orb orb-1" style="background:radial-gradient(circle,#58a6ff,transparent 70%);animation-duration:26s;"></div>
+  <div class="orb orb-2" style="background:radial-gradient(circle,#bc8cff,transparent 70%);"></div>
+  <div class="orb orb-3" style="background:radial-gradient(circle,#58a6ff,transparent 70%);"></div>
+  <div class="orb orb-4" style="background:radial-gradient(circle,#00e676,transparent 70%);opacity:.1;"></div>
+</div>
+<canvas id="bg-canvas"></canvas>
+
+<!-- ── NAV ── -->
+<nav>
+  <a class="nav-logo" href="index.html">
+    <span class="live-dot"></span>
+    <span class="logo-w">Dev</span>Cut
+  </a>
+  <div class="nav-links">
+    <a href="how-it-works.html" class="hide-mobile">How It Works</a>
+    <a href="earnings.html" class="hide-mobile">Earnings</a>
+    <a href="index.html#install" class="hide-mobile">Install</a>
+    <a href="advertisers.html" style="color:var(--text);" class="hide-mobile">Advertise</a>
+    <a class="nav-cta" href="#get-started" style="background:var(--blue);color:#000;">Get Started</a>
+  </div>
+</nav>
+
+<!-- ── HERO ── -->
+<section class="hero">
+  <div class="hero-badge fade-up" style="background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.22);color:var(--blue);display:inline-flex;align-items:center;gap:.5rem;padding:.4rem 1rem;border-radius:100px;font-size:.78rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">
+    📣 For Advertisers
+  </div>
+  <h1 class="fade-up delay-1">
+    Your brand, inside every<br/>
+    developer's <span class="hl-blue">workflow.</span>
+  </h1>
+  <p class="hero-sub fade-up delay-2">
+    Not a banner. Not a pop-up. A single sponsored line in the VS Code status bar — seen at the exact moment a developer is waiting on a build. <strong style="color:var(--text);">Peak attention. Zero noise.</strong>
+  </p>
+  <div class="hero-pills fade-up delay-3">
+    <span class="pill pill-blue">⚡ 500+ verified developers</span>
+    <span class="pill pill-green">₹ INR billing, no forex fees</span>
+    <span class="pill pill-purple">🎯 Task-type targeting</span>
+    <span class="pill pill-blue">📊 Real-time reporting</span>
+    <span class="pill pill-green">✅ ₹500 minimum</span>
+  </div>
+  <div style="display:flex;gap:1rem;flex-wrap:wrap;justify-content:center;margin-top:2.5rem;" class="fade-up delay-4">
+    <a class="btn-primary" href="#get-started" style="background:var(--blue);color:#000;font-size:1.05rem;padding:.85rem 2.2rem;">Start Advertising →</a>
+    <a class="btn-secondary" href="#pricing">See Pricing</a>
+  </div>
+
+  <!-- VS Code mockup in hero -->
+  <div class="fade-up delay-4" style="margin-top:3.5rem;max-width:620px;width:100%;">
+    <div class="vscode-window">
+      <div class="vscode-titlebar">
+        <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+        <span style="color:rgba(255,255,255,.3);font-size:.72rem;margin-left:.8rem;font-family:monospace;">my-app — npm run build</span>
+      </div>
+      <div class="vscode-tabs">
+        <div class="vscode-tab active">main.ts</div>
+        <div class="vscode-tab">api.ts</div>
+      </div>
+      <div class="vscode-editor" style="min-height:80px;">
+        <div><span class="ln">1</span> <span class="cm">// ⚙ Building… (3.2s elapsed)</span></div>
+        <div><span class="ln">2</span> <span class="kw">const</span> app = <span class="fn">createApp</span>();</div>
+        <div><span class="ln">3</span> <span class="str">"waiting on webpack…"</span></div>
+      </div>
+      <div class="vscode-statusbar">
+        <div class="statusbar-left"><span>⎇ main</span><span>⚙ Building (23s)…</span></div>
+        <div class="statusbar-right">
+          <div class="statusbar-ad" id="heroAdText" style="animation:ad-pulse 3s ease infinite;">
+            📣 <span id="heroAdSpan">Your Company — Free trial for Indian devs →</span>
+          </div>
+          <span class="earnings-badge">+₹0.04</span>
+        </div>
+      </div>
+    </div>
+    <p style="color:var(--muted);font-size:.75rem;margin-top:.7rem;text-align:center;">↑ This is what developers see during every long-running task</p>
+  </div>
+</section>
+
+<!-- ── WHY DEVCUT ── -->
+<section style="background:rgba(22,27,34,.7);backdrop-filter:blur(6px);">
+  <div class="container">
+    <div class="section-label reveal">Why DevCut</div>
+    <h2 class="section-title reveal">The audience you can't reach anywhere else.</h2>
+    <p class="section-sub reveal">Developers ignore banners. They use ad-blockers. They skip pre-rolls. But they can't skip their own build — and that's exactly when your message shows up.</p>
+
+    <div class="why-grid">
+      <div class="why-card reveal" style="--card-accent:var(--blue);">
+        <span class="why-icon">🧠</span>
+        <h3>Captive, undivided attention</h3>
+        <p>When a build runs, the developer isn't doing anything else. No tab-switching. No phone-picking-up. They're watching that status bar. Your ad is the only thing moving.</p>
+        <span class="card-stat">~23s avg. exposure</span>
+      </div>
+      <div class="why-card reveal" style="--card-accent:var(--green);">
+        <span class="why-icon">✅</span>
+        <h3>Verified developer audience</h3>
+        <p>Every user activated via invite code + registered email. No bots, no proxy traffic, no click farms. Impression = a real developer's VS Code, mid-task.</p>
+        <span class="card-stat">0 bot impressions</span>
+      </div>
+      <div class="why-card reveal" style="--card-accent:var(--purple);">
+        <span class="why-icon">🎯</span>
+        <h3>Task-type targeting</h3>
+        <p>Bid specifically on Build Slots (webpack/cargo devs), Test Slots (backend engineers), or Install Slots (all devs). Reach exactly the persona that buys your product.</p>
+        <span class="card-stat">3 slot types</span>
+      </div>
+      <div class="why-card reveal" style="--card-accent:var(--blue);">
+        <span class="why-icon">₹</span>
+        <h3>INR pricing, UPI billing</h3>
+        <p>No dollar conversion. No Stripe. No blocked accounts. Pay via UPI, bank transfer, or NEFT in rupees. Tailored for Indian startups and SaaS companies.</p>
+        <span class="card-stat">₹500 minimum</span>
+      </div>
+      <div class="why-card reveal" style="--card-accent:var(--green);">
+        <span class="why-icon">🔬</span>
+        <h3>Open source + auditable</h3>
+        <p>The impression counting logic is open source. You can verify every impression is real. No black-box reporting. No mystery CTR numbers. Full public ledger.</p>
+        <span class="card-stat">100% transparent</span>
+      </div>
+      <div class="why-card reveal" style="--card-accent:var(--orange);">
+        <span class="why-icon">⚡</span>
+        <h3>Live in 24 hours</h3>
+        <p>Submit your inquiry today, get approved tomorrow, go live the same day. No 2-week onboarding. No account manager gatekeeping. Just a form and a UPI transfer.</p>
+        <span class="card-stat">24h time to live</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── VS COMPARISON ── -->
+<section>
+  <div class="container">
+    <div class="section-label reveal">Comparison</div>
+    <h2 class="section-title reveal">Other platforms reach users. We reach developers.</h2>
+    <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:2.5rem;">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th class="head-us">DevCut</th>
+            <th>Google Ads</th>
+            <th>LinkedIn Ads</th>
+            <th>Newsletter Ads</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Target verified developers</td><td class="col-us yes">✓ Invite-only</td><td class="no">✗</td><td class="part">~ Job title only</td><td class="part">~ Self-reported</td></tr>
+          <tr><td>Zero-scroll attention</td><td class="col-us yes">✓ Mid-build</td><td class="no">✗</td><td class="no">✗</td><td class="part">~ If they open it</td></tr>
+          <tr><td>Task-type targeting</td><td class="col-us yes">✓ Build/Test/Install</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td></tr>
+          <tr><td>INR billing / UPI</td><td class="col-us yes">✓ Native</td><td class="part">~ USD default</td><td class="no">✗ USD only</td><td class="part">~ Varies</td></tr>
+          <tr><td>Minimum spend</td><td class="col-us" style="color:var(--green);">₹500</td><td class="part">₹4,200 (~$50)</td><td class="no">₹16,800 (~$200)</td><td class="part">₹8,400+</td></tr>
+          <tr><td>Ad-blocker immune</td><td class="col-us yes">✓ Native API</td><td class="no">✗</td><td class="no">✗</td><td class="yes">✓</td></tr>
+          <tr><td>Bot / fraud protection</td><td class="col-us yes">✓ Invite-gated</td><td class="part">~ ML-based</td><td class="part">~ ML-based</td><td class="yes">✓</td></tr>
+          <tr><td>Open source reporting</td><td class="col-us yes">✓ Full audit trail</td><td class="no">✗</td><td class="no">✗</td><td class="no">✗</td></tr>
+          <tr><td>Time to first impression</td><td class="col-us" style="color:var(--green);">24 hours</td><td class="part">2–5 days</td><td class="part">2–7 days</td><td class="part">Next issue</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── SLOT TYPES ── -->
+<section style="background:rgba(22,27,34,.7);backdrop-filter:blur(6px);" id="slots">
+  <div class="container">
+    <div class="section-label reveal">Slot Types</div>
+    <h2 class="section-title reveal">Pick the workflow. Own the moment.</h2>
+    <p class="section-sub reveal">Each slot targets a different type of developer at a different moment of their day.</p>
+
+    <div style="overflow-x:auto;margin-top:2rem;">
+      <table class="bid-table">
+        <thead>
+          <tr>
+            <th>Slot</th>
+            <th>Triggers on</th>
+            <th>Developer profile</th>
+            <th style="text-align:center;">CPM range</th>
+            <th style="text-align:center;">Est. daily impr.</th>
+            <th style="text-align:center;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>🔨 Build</strong></td>
+            <td><code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">npm build</code> · <code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">cargo</code> · webpack</td>
+            <td>Frontend &amp; fullstack</td>
+            <td>₹2 – ₹8</td>
+            <td>~1,000</td>
+            <td><span class="badge-slot badge-prime">Prime</span></td>
+          </tr>
+          <tr>
+            <td><strong>🧪 Test</strong></td>
+            <td><code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">jest</code> · <code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">pytest</code> · <code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">go test</code></td>
+            <td>Backend &amp; platform</td>
+            <td>₹1.5 – ₹6</td>
+            <td>~800</td>
+            <td><span class="badge-slot badge-active">Active</span></td>
+          </tr>
+          <tr>
+            <td><strong>📦 Install</strong></td>
+            <td><code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">npm i</code> · <code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">pip</code> · <code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">docker pull</code></td>
+            <td>All developers</td>
+            <td>₹1 – ₹4</td>
+            <td>~600</td>
+            <td><span class="badge-slot badge-active">Active</span></td>
+          </tr>
+          <tr>
+            <td><strong>🤖 AI Tools</strong></td>
+            <td><code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">claude</code> · <code style="font-size:.8rem;background:rgba(48,54,61,.5);padding:.1rem .4rem;border-radius:4px;">aider</code> · Cursor sessions</td>
+            <td>AI-forward devs</td>
+            <td>₹3 – ₹10</td>
+            <td>~400</td>
+            <td><span class="badge-slot badge-prime">New</span></td>
+          </tr>
+          <tr>
+            <td><strong>🎯 Custom</strong></td>
+            <td>Any task pattern (regex)</td>
+            <td>Your exact persona</td>
+            <td>Negotiated</td>
+            <td>—</td>
+            <td><span class="badge-slot badge-soon">Enterprise</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ── PRICING ── -->
+<section id="pricing">
+  <div class="container">
+    <div class="section-label reveal">Pricing</div>
+    <h2 class="section-title reveal">Start small. Scale as you grow.</h2>
+    <p class="section-sub reveal">No contracts. No account managers. Pause or top-up any time.</p>
+
+    <div class="pricing-grid">
+      <!-- Starter -->
+      <div class="price-card reveal">
+        <div class="price-tier">Starter</div>
+        <div class="price-amount">₹500 <sub>minimum</sub></div>
+        <p class="price-desc">Perfect for indie products, side projects, and first experiments with developer ads.</p>
+        <ul class="price-list">
+          <li><span class="ck">✓</span> <span>Up to <strong>~12,000 impressions</strong> at avg CPM</span></li>
+          <li><span class="ck">✓</span> <span><strong>All 3 slot types</strong> available</span></li>
+          <li><span class="ck">✓</span> <span>Basic impression + click reporting</span></li>
+          <li><span class="ck">✓</span> <span>Manual setup by our team (24h)</span></li>
+          <li><span class="ck">✓</span> <span>UPI / bank transfer billing</span></li>
+        </ul>
+        <a href="#get-started" class="price-cta outline">Get started →</a>
+      </div>
+
+      <!-- Growth (featured) -->
+      <div class="price-card featured reveal">
+        <div class="price-badge">Most Popular</div>
+        <div class="price-tier">Growth</div>
+        <div class="price-amount">₹5,000 <sub>/mo</sub></div>
+        <p class="price-desc">For SaaS products and devtools that want sustained reach across the developer community.</p>
+        <ul class="price-list">
+          <li><span class="ck">✓</span> <span><strong>~120K–500K impressions/month</strong></span></li>
+          <li><span class="ck">✓</span> <span><strong>Priority slot allocation</strong> + task-type targeting</span></li>
+          <li><span class="ck">✓</span> <span>Daily budget cap controls</span></li>
+          <li><span class="ck">✓</span> <span>Weekly performance summary email</span></li>
+          <li><span class="ck">✓</span> <span>Ad copy A/B testing (2 variants)</span></li>
+          <li><span class="ck">✓</span> <span>Priority 24h support</span></li>
+        </ul>
+        <a href="#get-started" class="price-cta primary">Start growing →</a>
+      </div>
+
+      <!-- Enterprise -->
+      <div class="price-card reveal">
+        <div class="price-tier">Enterprise</div>
+        <div class="price-amount" style="font-size:2.2rem;">Custom</div>
+        <p class="price-desc">For larger companies, hiring platforms, and brands that need custom targeting, dedicated reporting, and SLA guarantees.</p>
+        <ul class="price-list">
+          <li><span class="ck">✓</span> <span><strong>Unlimited impressions</strong> within budget</span></li>
+          <li><span class="ck">✓</span> <span><strong>Custom slot patterns</strong> (regex targeting)</span></li>
+          <li><span class="ck">✓</span> <span>Dedicated account manager</span></li>
+          <li><span class="ck">✓</span> <span>Custom reporting dashboard</span></li>
+          <li><span class="ck">✓</span> <span>Invoice billing + GST receipt</span></li>
+          <li><span class="ck">✓</span> <span>Retargeting (coming Q3)</span></li>
+        </ul>
+        <a href="mailto:er.gouravgujariya@gmail.com?subject=DevCut Enterprise Inquiry" class="price-cta outline">Contact us →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── BUDGET CALCULATOR ── -->
+<section style="background:rgba(22,27,34,.7);backdrop-filter:blur(6px);">
+  <div class="container" style="max-width:680px;">
+    <div class="section-label reveal">Budget Estimator</div>
+    <h2 class="section-title reveal">How far will ₹X go?</h2>
+    <p class="section-sub reveal">Adjust your budget and slot type. Numbers update live.</p>
+
+    <div class="budget-wrap reveal">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;margin-bottom:1.5rem;">
+        <div>
+          <label for="calcBudget">Monthly budget (₹)</label>
+          <input class="fi" type="number" id="calcBudget" value="2000" min="500" step="500" />
+        </div>
+        <div>
+          <label for="calcSlot">Slot type</label>
+          <select class="fi" id="calcSlot">
+            <option value="5">🔨 Build (avg ₹5 CPM)</option>
+            <option value="3.75" selected>🧪 Test (avg ₹3.75 CPM)</option>
+            <option value="2.5">📦 Install (avg ₹2.5 CPM)</option>
+            <option value="6.5">🤖 AI Tools (avg ₹6.5 CPM)</option>
+          </select>
+        </div>
+      </div>
+      <div class="calc-result">
+        <div class="calc-box"><div class="num" id="cImpr" style="color:var(--blue);">—</div><div class="lbl">impressions</div></div>
+        <div class="calc-box"><div class="num" id="cDays" style="color:var(--purple);">—</div><div class="lbl">days coverage</div></div>
+        <div class="calc-box"><div class="num" id="cClicks" style="color:var(--green);">—</div><div class="lbl">est. clicks</div></div>
+        <div class="calc-box"><div class="num" id="cDevs" style="color:var(--orange);">—</div><div class="lbl">unique devs reach</div></div>
+      </div>
+      <p style="color:var(--muted);font-size:.75rem;margin-top:1rem;line-height:1.5;">CPM = cost per 1,000 impressions. Estimates based on 500 active developers, 8 impressions/dev/day. 2% CTR industry average. Actual results vary.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── AD FORMAT + LIVE PREVIEW ── -->
+<section>
+  <div class="container">
+    <div class="section-label reveal">Ad Format</div>
+    <h2 class="section-title reveal">One line. Zero friction.</h2>
+    <p class="section-sub reveal">Text-only. No images, no videos, no pop-ups. The simplest ad format ever — and the most viewed.</p>
+
+    <div class="format-grid">
+      <div class="reveal">
+        <h3 style="margin-bottom:1.2rem;font-size:.9rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Format rules</h3>
+        <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;display:flex;flex-direction:column;">
+          <div class="spec-row"><span class="spec-key">Text length</span><span class="spec-val">Max 160 characters</span></div>
+          <div class="spec-row"><span class="spec-key">Emoji support</span><span class="spec-val" style="color:var(--green);">✓ Recommended</span></div>
+          <div class="spec-row"><span class="spec-key">Destination URL</span><span class="spec-val">1 link (opens on click)</span></div>
+          <div class="spec-row"><span class="spec-key">Tracking</span><span class="spec-val">Impression + click counted</span></div>
+          <div class="spec-row"><span class="spec-key">Tone</span><span class="spec-val">Dev-friendly required</span></div>
+          <div class="spec-row"><span class="spec-key">Review</span><span class="spec-val">Manual approval (&lt;24h)</span></div>
+          <div class="spec-row"><span class="spec-key">Minimum spend</span><span class="spec-val" style="color:var(--blue);font-weight:700;">₹500</span></div>
+        </div>
+        <div style="margin-top:1.5rem;background:rgba(0,230,118,.06);border:1px solid rgba(0,230,118,.18);border-radius:10px;padding:1rem 1.2rem;">
+          <p style="font-size:.83rem;color:var(--muted);line-height:1.6;"><strong style="color:var(--green);">Tip:</strong> The best-performing ads speak developer-to-developer. Mention the actual problem you solve, not just your product name. <em>"Postman — debug your API in 10 seconds"</em> outperforms <em>"Try Postman today"</em> by 3×.</p>
+        </div>
+      </div>
+      <div class="reveal">
+        <h3 style="margin-bottom:1.2rem;font-size:.9rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;">Live preview</h3>
+        <div class="vscode-window">
+          <div class="vscode-titlebar">
+            <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+          </div>
+          <div class="vscode-tabs"><div class="vscode-tab active">index.ts</div></div>
+          <div class="vscode-editor" style="min-height:70px;">
+            <div><span class="ln">1</span> <span class="cm">// ⚙ Running tests…</span></div>
+            <div><span class="ln">2</span> <span class="kw">await</span> <span class="fn">runTests</span>();</div>
+          </div>
+          <div class="vscode-statusbar">
+            <div class="statusbar-left"><span>⎇ main</span><span>⚙ Testing…</span></div>
+            <div class="statusbar-right">
+              <div class="statusbar-ad">📣 <span id="adPreviewText">Your Company — tagline goes here →</span></div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:.8rem;">
+          <input type="text" id="adInput" style="width:100%;background:rgba(13,17,23,.8);border:1px solid rgba(48,54,61,.8);border-radius:10px;padding:.7rem 1rem;color:var(--text);font-size:.95rem;outline:none;transition:border-color .2s;" maxlength="160" placeholder="Type your ad copy to preview it live…" value="Your Company — Free trial for Indian developers →" />
+          <div class="char-hint"><span id="charCount">47</span> / 160</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── INQUIRY FORM ── -->
+<section id="get-started" style="background:rgba(22,27,34,.7);backdrop-filter:blur(6px);">
+  <div class="container" style="max-width:780px;">
+    <div class="section-label reveal">Get Started</div>
+    <h2 class="section-title reveal">Launch your first campaign.</h2>
+    <p class="section-sub reveal">Fill this in — we'll review and get back within 24 hours with your setup link and payment details.</p>
+
+    <div class="form-wrap reveal" style="margin-top:2.5rem;">
+      <div class="form-header">
+        <h2>Advertiser Inquiry</h2>
+        <p>Takes 2 minutes · We respond same day (Mon–Sat)</p>
+      </div>
+
+      <form id="inquiryForm">
+        <div class="form-grid">
+
+          <!-- Company -->
+          <div class="field">
+            <label>Company / Product name <span class="req">*</span></label>
+            <input type="text" name="company" placeholder="Acme Corp" required maxlength="120" />
+          </div>
+
+          <!-- Contact name -->
+          <div class="field">
+            <label>Your name <span class="req">*</span></label>
+            <input type="text" name="contact_name" placeholder="Priya Sharma" required maxlength="120" />
+          </div>
+
+          <!-- Work email -->
+          <div class="field">
+            <label>Work email <span class="req">*</span></label>
+            <input type="email" name="email" placeholder="priya@acme.com" required />
+          </div>
+
+          <!-- Website -->
+          <div class="field">
+            <label>Company website</label>
+            <input type="url" name="website" placeholder="https://acme.com" />
+          </div>
+
+          <!-- Product type -->
+          <div class="field">
+            <label>What are you advertising? <span class="req">*</span></label>
+            <select name="product_type" required>
+              <option value="" disabled selected>Select category…</option>
+              <option value="devtool">Developer Tool / SDK / API</option>
+              <option value="saas">SaaS Product</option>
+              <option value="cloud">Cloud / Infra / Hosting</option>
+              <option value="course">Course / Bootcamp / Learning</option>
+              <option value="hiring">Hiring / Jobs / Talent</option>
+              <option value="ai">AI Tool / LLM Product</option>
+              <option value="open-source">Open Source Project</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+
+          <!-- Slot type -->
+          <div class="field">
+            <label>Target slot type <span class="req">*</span></label>
+            <select name="slot_type" required>
+              <option value="" disabled selected>Select slot…</option>
+              <option value="all">All slots (recommended)</option>
+              <option value="build">🔨 Build Slot — frontend / fullstack devs</option>
+              <option value="test">🧪 Test Slot — backend / platform devs</option>
+              <option value="install">📦 Install Slot — all developers</option>
+            </select>
+          </div>
+
+          <!-- Destination URL -->
+          <div class="field span-2">
+            <label>Destination URL (where clicks go) <span class="req">*</span></label>
+            <input type="url" name="destination_url" placeholder="https://acme.com/devcut-offer" required />
+          </div>
+
+          <!-- Ad text with live preview -->
+          <div class="field span-2">
+            <label>Ad copy / tagline <span class="req">*</span> <span style="font-weight:400;color:rgba(139,148,158,.7);">— max 160 chars, updates preview below</span></label>
+            <input type="text" name="ad_text" id="formAdText" placeholder="Acme — Ship APIs faster, free plan for OSS devs →" required maxlength="160" />
+            <div class="char-hint"><span id="formCharCount">0</span> / 160</div>
+            <!-- Mini preview -->
+            <div style="margin-top:.8rem;">
+              <div class="preview-label">Live preview</div>
+              <div style="background:#1e1e2e;border-radius:8px 8px 0 0;padding:.6rem 1rem;font-family:monospace;font-size:.75rem;color:#546e7a;">
+                <span style="color:#3e3e5e;">1</span>&nbsp;&nbsp;<span style="color:#c792ea;">await</span> <span style="color:#82aaff;">runBuild</span>(); <span style="color:#546e7a;">// ⚙ building (18s)…</span>
+              </div>
+              <div class="mini-statusbar">
+                <span style="color:rgba(255,255,255,.6);font-size:.7rem;">⎇ main &nbsp;⚙ Building…</span>
+                <div class="mini-ad">📣 <span id="formAdPreview">Your ad will appear here</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Monthly budget -->
+          <div class="field span-2">
+            <label>Monthly budget <span class="req">*</span></label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:.2rem;">
+              <div style="display:flex;flex-direction:column;gap:.6rem;">
+                <input type="range" class="budget-range" name="budget_slider" id="budgetSlider" min="0" max="3" step="1" value="1" style="--pct:33%;" />
+                <div class="budget-track">
+                  <span>₹500</span><span>₹1–5K</span><span>₹5–20K</span><span>₹20K+</span>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:center;background:rgba(88,166,255,.06);border:1px solid rgba(88,166,255,.2);border-radius:10px;padding:.8rem;">
+                <div style="text-align:center;">
+                  <div class="budget-display" id="budgetDisplay">₹1,000 – ₹5,000</div>
+                  <div style="color:var(--muted);font-size:.73rem;margin-top:.2rem;">/month estimate</div>
+                </div>
+              </div>
+            </div>
+            <input type="hidden" name="budget_range" id="budgetHidden" value="1000-5000" />
+          </div>
+
+          <!-- Notes -->
+          <div class="field span-2">
+            <label>Anything else we should know? <span style="font-weight:400;color:rgba(139,148,158,.5);">(optional)</span></label>
+            <textarea name="notes" placeholder="Target audience details, launch timeline, special requirements, questions…" maxlength="1000"></textarea>
+          </div>
+
+          <!-- Submit -->
+          <div class="span-2">
+            <div class="submit-row">
+              <button type="submit" id="submitInquiry">Send Inquiry →</button>
+              <p class="submit-note">We'll reply to your email within 24h (Mon–Sat) with pricing confirmation and a payment link.<br/>No obligation. No spam.</p>
+            </div>
+            <div class="form-error" id="formError"></div>
+          </div>
+
+        </div>
+      </form>
+
+      <div class="form-success" id="formSuccess">
+        <span class="big-icon">🎉</span>
+        <h3>Inquiry received!</h3>
+        <p>We'll review your ad copy and budget and reply to <strong id="successEmail"></strong> within 24 hours with next steps and a payment link.</p>
+        <p style="margin-top:.8rem;font-size:.82rem;">While you wait — <a href="how-it-works.html" style="color:var(--blue);">see how impressions work →</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── FAQ ── -->
+<section>
+  <div class="container" style="max-width:720px;">
+    <div class="section-label reveal">FAQ</div>
+    <h2 class="section-title reveal">Common questions.</h2>
+
+    <div class="faq-list reveal">
+      <div class="faq-item">
+        <button class="faq-q">How is an impression counted? <span class="chevron">▼</span></button>
+        <div class="faq-a"><p>An impression is recorded server-side the moment DevCut displays your ad line in the VS Code status bar. It requires a valid authenticated developer JWT — no auth, no impression. Bot-proof by design. You can audit the exact counting logic in our open-source server repo.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">Can I pause or change my ad copy mid-campaign? <span class="chevron">▼</span></button>
+        <div class="faq-a"><p>Yes. Reply to your confirmation email (or message us at techsupport@devcut.co.in) and we'll update your ad within a few hours. Your remaining budget carries forward — nothing is wasted.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">How do I pay? Is GST invoice available? <span class="chevron">▼</span></button>
+        <div class="faq-a"><p>We accept UPI, NEFT, and bank transfer in INR. After we approve your inquiry, you'll receive a payment link with the amount and UPI ID. GST invoices are available for Growth and Enterprise tiers on request.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">What's the minimum I need to spend? <span class="chevron">▼</span></button>
+        <div class="faq-a"><p>₹500 for the Starter tier. At ₹3.75 average CPM, that's ~13,300 developer impressions. Most advertisers start at ₹1,000–₹2,000 to collect meaningful CTR data before scaling.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">What kinds of ads are rejected? <span class="chevron">▼</span></button>
+        <div class="faq-a"><p>We reject ads that are misleading, spam-like, violate developer platform policies, or are unrelated to developers' professional interests. Crypto/NFT speculative ads, gambling, and adult content are not accepted. Dev tools, SaaS, hiring, infrastructure, and courses are all welcome.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-q">How many developers will see my ad? <span class="chevron">▼</span></button>
+        <div class="faq-a"><p>We currently have 500+ active developers in the beta. Each developer generates roughly 8–15 impressions per day during their builds and tests. We're growing fast — if you lock in now at beta pricing (₹500 min), you're early to a network that's expected to reach 5,000+ developers by end of year.</p></div>
+      </div>
+    </div>
+
+    <!-- Contact strip -->
+    <div class="contact-strip reveal">
+      <h3>Need something custom?</h3>
+      <p>Large enterprise deals, custom targeting patterns, retargeting, or bulk prepaid packages? Let's talk directly.</p>
+      <div class="contact-methods">
+        <a class="contact-method" href="mailto:er.gouravgujariya@gmail.com?subject=DevCut Enterprise Inquiry">
+          <span>✉️</span> Email us
+        </a>
+        <a class="contact-method" href="mailto:techsupport@devcut.co.in?subject=DevCut Advertiser">
+          <span>💬</span> techsupport@devcut.co.in
+        </a>
+        <a class="contact-method" href="#get-started">
+          <span>📋</span> Fill the form above
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-logo">⚡ <span>Dev</span>Cut</div>
+  <p style="margin-top:.4rem;">Open source · MIT licence · Built for developers, by a developer</p>
+  <div style="margin-top:1rem;display:flex;gap:1.5rem;justify-content:center;flex-wrap:wrap;">
+    <a href="how-it-works.html">How It Works</a>
+    <a href="earnings.html">Earnings</a>
+    <a href="advertisers.html">Advertise</a>
+    <a href="index.html#india">India</a>
+    <a href="https://github.com/gouravgujariya/waitwage" target="_blank" rel="noopener">GitHub</a>
+    <a href="mailto:er.gouravgujariya@gmail.com">Contact</a>
+    <a href="index.html#faq">FAQ</a>
+  </div>
+  <p style="margin-top:1.5rem;font-size:.78rem;color:#3e4450;">© 2026 DevCut · Making idle time less idle.</p>
+</footer>
+
+<style>
+@keyframes ad-pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(88,166,255,0); }
+  50%      { box-shadow: 0 0 12px 2px rgba(88,166,255,.25); }
+}
+</style>
+
+<script>
+const BACKEND = 'https://waitwage-production.up.railway.app';
+
+/* ── CANVAS ── */
+(function(){
+  const c=document.getElementById('bg-canvas'),ctx=c.getContext('2d');
+  let W,H,pts,mouse={x:-999,y:-999};
+  const COL=['#58a6ff','#bc8cff','#00e676'],SYM=['₹','$','>','{','}','//','→','⚡'];
+  function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight;}
+  function mk(){const s=Math.random()<.12;return{x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.4,vy:(Math.random()-.5)*.4,r:s?0:Math.random()*1.8+.6,sym:s?SYM[Math.floor(Math.random()*SYM.length)]:null,col:COL[Math.floor(Math.random()*COL.length)],a:Math.random()*.5+.15};}
+  function init(){resize();pts=Array.from({length:Math.min(Math.floor(W*H/14000),90)},mk);}
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++){const dx=pts[i].x-pts[j].x,dy=pts[i].y-pts[j].y,d=Math.sqrt(dx*dx+dy*dy);if(d<140){ctx.beginPath();ctx.strokeStyle=pts[i].col;ctx.globalAlpha=(1-d/140)*.08;ctx.lineWidth=.5;ctx.moveTo(pts[i].x,pts[i].y);ctx.lineTo(pts[j].x,pts[j].y);ctx.stroke();}}
+    ctx.globalAlpha=1;
+    for(const p of pts){const mx=p.x-mouse.x,my=p.y-mouse.y,md=Math.sqrt(mx*mx+my*my);if(md<120){const f=(120-md)/120*.8;p.vx+=(mx/md)*f*.06;p.vy+=(my/md)*f*.06;}const sp=Math.sqrt(p.vx*p.vx+p.vy*p.vy);if(sp>1.2){p.vx=(p.vx/sp)*1.2;p.vy=(p.vy/sp)*1.2;}p.x+=p.vx;p.y+=p.vy;if(p.x<-10)p.x=W+10;if(p.x>W+10)p.x=-10;if(p.y<-10)p.y=H+10;if(p.y>H+10)p.y=-10;ctx.globalAlpha=p.a;if(p.sym){ctx.fillStyle=p.col;ctx.font='11px monospace';ctx.fillText(p.sym,p.x,p.y);}else{ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=p.col;ctx.fill();}}
+    ctx.globalAlpha=1;requestAnimationFrame(draw);
+  }
+  window.addEventListener('resize',resize);
+  window.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
+  init();draw();
+})();
+
+/* ── HERO AD ROTATOR ── */
+(function(){
+  const lines = [
+    'Postman — Test your APIs in seconds →',
+    'Hasura — Instant GraphQL on your DB →',
+    'Render — Deploy in 30s, free tier →',
+    'Sentry — Fix bugs before users find them →',
+    'Your Company — tagline goes here →',
+  ];
+  const el = document.getElementById('heroAdSpan');
+  let i = 0;
+  setInterval(() => {
+    el.style.opacity = '0';
+    setTimeout(() => { el.textContent = lines[i = (i+1) % lines.length]; el.style.opacity = '1'; }, 300);
+  }, 3000);
+  el.style.transition = 'opacity .3s';
+})();
+
+/* ── BUDGET CALCULATOR ── */
+(function(){
+  const b=document.getElementById('calcBudget'), s=document.getElementById('calcSlot');
+  function fmt(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1000?Math.round(n/1000)+'K':Math.round(n);}
+  function upd(){
+    const budget=+b.value||0, cpm=+s.value;
+    const impr=(budget/cpm)*1000, days=Math.round(impr/(500*8)), clicks=Math.round(impr*.02), devs=Math.min(500,Math.round(impr/8/30));
+    document.getElementById('cImpr').textContent=fmt(impr);
+    document.getElementById('cDays').textContent='~'+Math.max(1,days);
+    document.getElementById('cClicks').textContent='~'+fmt(clicks);
+    document.getElementById('cDevs').textContent='~'+fmt(devs);
+  }
+  b.addEventListener('input',upd); s.addEventListener('change',upd); upd();
+})();
+
+/* ── AD PREVIEW (format section) ── */
+(function(){
+  const inp=document.getElementById('adInput'), prev=document.getElementById('adPreviewText'), cnt=document.getElementById('charCount');
+  function upd(){prev.textContent=inp.value||'Your tagline here →'; cnt.textContent=inp.value.length; cnt.className=inp.value.length>140?'over':'';}
+  inp.addEventListener('input',upd); upd();
+})();
+
+/* ── FORM AD PREVIEW ── */
+(function(){
+  const inp=document.getElementById('formAdText'), prev=document.getElementById('formAdPreview'), cnt=document.getElementById('formCharCount');
+  function upd(){prev.textContent=inp.value||'Your ad will appear here'; cnt.textContent=inp.value.length; cnt.className=inp.value.length>140?'over':'';}
+  inp.addEventListener('input',upd);
+})();
+
+/* ── BUDGET SLIDER ── */
+(function(){
+  const slider=document.getElementById('budgetSlider'), disp=document.getElementById('budgetDisplay'), hidden=document.getElementById('budgetHidden');
+  const opts=[
+    {label:'₹500 – ₹1,000', value:'500-1000'},
+    {label:'₹1,000 – ₹5,000', value:'1000-5000'},
+    {label:'₹5,000 – ₹20,000', value:'5000-20000'},
+    {label:'₹20,000+', value:'20000+'},
+  ];
+  function upd(){
+    const v=+slider.value;
+    const pct=(v/3)*100;
+    slider.style.setProperty('--pct', pct+'%');
+    disp.textContent=opts[v].label;
+    hidden.value=opts[v].value;
+  }
+  slider.addEventListener('input',upd); upd();
+})();
+
+/* ── INQUIRY FORM SUBMIT ── */
+(function(){
+  const BACKEND = 'https://waitwage-production.up.railway.app';
+  const form=document.getElementById('inquiryForm');
+  const btn=document.getElementById('submitInquiry');
+  const successEl=document.getElementById('formSuccess');
+  const errorEl=document.getElementById('formError');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    errorEl.style.display='none';
+    btn.disabled=true; btn.textContent='Sending…';
+
+    const fd=new FormData(form);
+    const payload={
+      company:         fd.get('company'),
+      contact_name:    fd.get('contact_name'),
+      email:           fd.get('email'),
+      website:         fd.get('website') || undefined,
+      ad_text:         fd.get('ad_text'),
+      destination_url: fd.get('destination_url'),
+      budget_range:    fd.get('budget_range'),
+      slot_type:       fd.get('slot_type'),
+      product_type:    fd.get('product_type') || undefined,
+      notes:           fd.get('notes') || undefined,
+    };
+
+    try {
+      const res = await fetch(`${BACKEND}/v1/public/advertiser-inquiry`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        form.style.display='none';
+        document.getElementById('successEmail').textContent=payload.email;
+        successEl.style.display='block';
+      } else {
+        throw new Error(body.error || 'Something went wrong. Try again or email us directly.');
+      }
+    } catch(err) {
+      errorEl.textContent=err.message;
+      errorEl.style.display='block';
+      btn.disabled=false; btn.textContent='Send Inquiry →';
+    }
+  });
+})();
+
+/* ── FAQ ACCORDION ── */
+document.querySelectorAll('.faq-q').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const item=btn.closest('.faq-item');
+    const wasOpen=item.classList.contains('open');
+    document.querySelectorAll('.faq-item.open').forEach(i=>i.classList.remove('open'));
+    if(!wasOpen) item.classList.add('open');
+  });
+});
+
+/* ── SCROLL REVEAL ── */
+const revObs=new IntersectionObserver((entries)=>{
+  entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');revObs.unobserve(e.target);}});
+},{threshold:0.08});
+document.querySelectorAll('.reveal').forEach(el=>revObs.observe(el));
+</script>
+</body>
+</html>

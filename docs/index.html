@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -205,9 +204,13 @@
 
     /* ── STATUS BAR MOCKUP ── */
     .mockup-wrap {
-      margin-top: 3.5rem; width: 100%; max-width: 900px;
+      margin-top: 3.5rem; width: 100%; max-width: 1000px;
       filter: drop-shadow(0 40px 80px rgba(0,0,0,.6));
     }
+    .mockup-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+    }
+    @media (max-width: 700px) { .mockup-grid { grid-template-columns: 1fr; } }
     .vscode-window {
       background: #1e1e2e;
       border-radius: 12px;
@@ -501,10 +504,11 @@
     <span class="logo-w">Dev</span>Cut
   </a>
   <div class="nav-links">
-    <a href="#how" class="hide-mobile">How It Works</a>
-    <a href="#join" class="hide-mobile">Join</a>
-    <a href="#advertise" class="hide-mobile">Advertise</a>
-    <a href="#open-source" class="hide-mobile">Open Source</a>
+    <a href="how-it-works.html" class="hide-mobile">How It Works</a>
+    <a href="earnings.html" class="hide-mobile">Earnings</a>
+    <a href="#install" class="hide-mobile">Install</a>
+    <a href="advertisers.html" class="hide-mobile">Advertise</a>
+    <a href="#india" class="hide-mobile">India</a>
     <a class="nav-cta" href="#early-access">Early Access</a>
   </div>
 </nav>
@@ -516,6 +520,9 @@
 
   <div class="hero-badge fade-up">
     ✦ Open Source &nbsp;·&nbsp; VS Code Extension
+  </div>
+  <div class="hero-badge fade-up delay-1" style="background:rgba(88,166,255,.08);border-color:rgba(88,166,255,.22);color:var(--blue);margin-top:.5rem;">
+    🇮🇳 &nbsp;Instant UPI Payouts &nbsp;·&nbsp; ₹ INR
   </div>
 
   <h1 class="fade-up delay-1">
@@ -534,42 +541,76 @@
   </div>
 
   <div class="mockup-wrap fade-up delay-4">
-    <div class="vscode-window">
-      <div class="vscode-titlebar">
-        <div class="dot red"></div>
-        <div class="dot yellow"></div>
-        <div class="dot green"></div>
+    <div style="display:flex;gap:.6rem;margin-bottom:.8rem;justify-content:center;flex-wrap:wrap;">
+      <div style="flex:1;text-align:center;max-width:440px;">
+        <span style="color:var(--muted);font-size:.75rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">❌ Without DevCut</span>
       </div>
-      <div class="vscode-tabs">
-        <div class="vscode-tab active">extension.ts</div>
-        <div class="vscode-tab">package.json</div>
+      <div style="flex:1;text-align:center;max-width:440px;">
+        <span style="color:var(--green);font-size:.75rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;">✓ With DevCut</span>
       </div>
-      <div class="vscode-editor">
-        <div><span class="ln">1</span> <span class="cm">// VS Code task started — showing sponsored line…</span></div>
-        <div><span class="ln">2</span> <span class="kw">export async function</span> <span class="fn">activate</span>(ctx: vscode.ExtensionContext) {</div>
-        <div><span class="ln">3</span> &nbsp;&nbsp;<span class="kw">const</span> sponsor = <span class="kw">await</span> <span class="fn">fetchSponsor</span>(<span class="str">'build-started'</span>);</div>
-        <div><span class="ln">4</span> &nbsp;&nbsp;statusBar.<span class="fn">text</span>(<span class="str">`📣 ${sponsor.message}`</span>);</div>
-        <div><span class="ln">5</span> &nbsp;&nbsp;<span class="cm">// Record impression → earn ₹0.04 per 30s slot</span></div>
-        <div><span class="ln">6</span> &nbsp;&nbsp;<span class="fn">recordImpression</span>(sponsor.id, userId);</div>
-        <div><span class="ln">7</span> }</div>
-      </div>
-      <div class="vscode-statusbar">
-        <div class="statusbar-left">
-          <span>⎇ main</span>
-          <span>✓ TypeScript</span>
-          <span>⚙ Building…</span>
+    </div>
+    <div class="mockup-grid">
+
+      <!-- BEFORE -->
+      <div class="vscode-window" style="opacity:.6;">
+        <div class="vscode-titlebar">
+          <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
         </div>
-        <div class="statusbar-right">
-          <div class="statusbar-ad">
-            📣 <span class="ticker" id="adTicker">DigitalOcean — Deploy in seconds →</span>
+        <div class="vscode-tabs">
+          <div class="vscode-tab active">extension.ts</div>
+          <div class="vscode-tab">package.json</div>
+        </div>
+        <div class="vscode-editor">
+          <div><span class="ln">1</span> <span class="cm">// Build started — just waiting…</span></div>
+          <div><span class="ln">2</span> <span class="kw">export async function</span> <span class="fn">activate</span>(ctx) {</div>
+          <div><span class="ln">3</span> &nbsp;&nbsp;<span class="cm">// ⏳ 40 seconds until complete</span></div>
+          <div><span class="ln">4</span> &nbsp;&nbsp;<span class="cm">// Nothing to do but wait.</span></div>
+          <div><span class="ln">5</span> }</div>
+        </div>
+        <div class="vscode-statusbar">
+          <div class="statusbar-left">
+            <span>⎇ main</span><span>✓ TypeScript</span><span>⚙ Building…</span>
           </div>
-          <div class="earnings-badge" id="earningsBadge">+₹0.04</div>
+          <div class="statusbar-right" style="color:rgba(255,255,255,.35);font-size:.68rem;">— idle —</div>
         </div>
       </div>
+
+      <!-- AFTER -->
+      <div class="vscode-window">
+        <div class="vscode-titlebar">
+          <div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div>
+        </div>
+        <div class="vscode-tabs">
+          <div class="vscode-tab active">extension.ts</div>
+          <div class="vscode-tab">package.json</div>
+        </div>
+        <div class="vscode-editor">
+          <div><span class="ln">1</span> <span class="cm">// VS Code task started — showing sponsored line…</span></div>
+          <div><span class="ln">2</span> <span class="kw">export async function</span> <span class="fn">activate</span>(ctx: vscode.ExtensionContext) {</div>
+          <div><span class="ln">3</span> &nbsp;&nbsp;<span class="kw">const</span> sponsor = <span class="kw">await</span> <span class="fn">fetchSponsor</span>(<span class="str">'build-started'</span>);</div>
+          <div><span class="ln">4</span> &nbsp;&nbsp;statusBar.<span class="fn">text</span>(<span class="str">`📣 ${sponsor.message}`</span>);</div>
+          <div><span class="ln">5</span> &nbsp;&nbsp;<span class="cm">// Record impression → earn ₹0.04 per 30s slot</span></div>
+          <div><span class="ln">6</span> &nbsp;&nbsp;<span class="fn">recordImpression</span>(sponsor.id, userId);</div>
+          <div><span class="ln">7</span> }</div>
+        </div>
+        <div class="vscode-statusbar">
+          <div class="statusbar-left">
+            <span>⎇ main</span><span>✓ TypeScript</span><span>⚙ Building…</span>
+          </div>
+          <div class="statusbar-right">
+            <div class="statusbar-ad">
+              📣 <span class="ticker" id="adTicker">DigitalOcean — Deploy in seconds →</span>
+            </div>
+            <div class="earnings-badge" id="earningsBadge">+₹0.04</div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
-  <div class="stats-row fade-up delay-4">
+  <!-- Stats hidden until real data exists; remove display:none and populate real figures to restore -->
+  <div class="stats-row fade-up delay-4" style="display:none">
     <div class="stat-card">
       <div class="stat-num" id="counter-devs">0</div>
       <div class="stat-label">developers earning</div>
@@ -625,6 +666,118 @@
   </div>
 </section>
 
+<!-- ── EARNINGS CALCULATOR ── -->
+<section id="calculator" style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
+  <div class="container" style="max-width:700px;text-align:center;">
+    <div class="section-label">Earnings Estimator</div>
+    <h2 class="section-title">How much could you make?</h2>
+    <p class="section-sub" style="margin:0 auto 2.5rem;">Drag the slider — see your estimated monthly payout.</p>
+
+    <div style="margin-bottom:2rem;">
+      <input type="range" id="hoursSlider" min="1" max="10" value="4" step="1"
+             style="width:100%;accent-color:var(--green);cursor:pointer;height:6px;">
+      <div style="display:flex;justify-content:space-between;color:var(--muted);font-size:.8rem;margin-top:.6rem;">
+        <span>1h / day</span>
+        <span id="hoursLabel" style="color:var(--text);font-weight:700;">4h / day</span>
+        <span>10h / day</span>
+      </div>
+    </div>
+
+    <div id="calcOutput" style="
+      background:var(--surface2);border:1px solid var(--border);
+      border-radius:16px;padding:2.5rem 2rem;
+      display:flex;gap:2rem;justify-content:center;align-items:center;flex-wrap:wrap;
+      transition:box-shadow .3s;
+    ">
+      <div>
+        <div id="calcRupees" style="font-size:3rem;font-weight:900;
+          background:linear-gradient(135deg,var(--green),#64ffda);
+          -webkit-background-clip:text;-webkit-text-fill-color:transparent;">₹42</div>
+        <div style="color:var(--muted);font-size:.85rem;margin-top:.3rem;">per month (INR)</div>
+      </div>
+      <div style="width:1px;height:60px;background:var(--border);flex-shrink:0;"></div>
+      <div>
+        <div id="calcDollars" style="font-size:3rem;font-weight:900;color:var(--blue);">$0.50</div>
+        <div style="color:var(--muted);font-size:.85rem;margin-top:.3rem;">per month (USD)</div>
+      </div>
+    </div>
+
+    <p style="color:var(--muted);font-size:.78rem;margin-top:1rem;">
+      Estimate: ~12 ad slots/hr × ₹0.04/slot × 22 working days. Actual depends on active build/test time.
+      <a href="earnings.html" style="color:var(--green);">See full breakdown →</a>
+    </p>
+  </div>
+</section>
+
+<!-- ── INSTALL ── -->
+<section id="install">
+  <div class="container" style="max-width:640px;text-align:center;">
+    <div class="section-label">One Command</div>
+    <h2 class="section-title">Install in 10 seconds</h2>
+    <p class="section-sub" style="margin:0 auto 2rem;">
+      Open VS Code, press
+      <kbd style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:.15rem .45rem;font-family:monospace;font-size:.88em;">⌘ P</kbd>
+      (or <kbd style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:.15rem .45rem;font-family:monospace;font-size:.88em;">Ctrl+P</kbd>), paste this:
+    </p>
+
+    <div style="
+      background:var(--surface2);border:1px solid var(--border);
+      border-radius:12px;padding:1.2rem 1.5rem;
+      display:flex;align-items:center;justify-content:space-between;gap:1rem;
+      font-family:'Fira Code','Cascadia Code',monospace;font-size:1rem;
+      text-align:left;
+    ">
+      <span><span style="color:var(--green);">ext install</span> <span style="color:var(--text);">devcut.devcut</span></span>
+      <button id="copyInstallBtn" onclick="copyInstall()" style="
+        background:var(--surface);border:1px solid var(--border);
+        color:var(--muted);border-radius:6px;padding:.35rem .75rem;
+        font-size:.8rem;cursor:pointer;transition:all .2s;white-space:nowrap;
+        font-family:inherit;
+      ">Copy</button>
+    </div>
+
+    <p style="color:var(--muted);font-size:.82rem;margin-top:1rem;">
+      Or search <strong style="color:var(--text);">"DevCut"</strong> in the VS Code Extensions panel (Ctrl+Shift+X).
+    </p>
+  </div>
+</section>
+
+<!-- ── PERSONAS ── -->
+<section id="personas" style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
+  <div class="container">
+    <div class="section-label">Who Earns</div>
+    <h2 class="section-title">Which developer are you?</h2>
+    <p class="section-sub">Self-identify — the calculator above adapts to your actual usage.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1.5rem;margin-top:2.5rem;">
+
+      <div class="step-card" style="border-color:rgba(0,230,118,.2);">
+        <span class="step-icon">☕</span>
+        <h3>The Dabbler</h3>
+        <p>Side projects on weekends. 1–2h of builds/tests per day.</p>
+        <div style="margin-top:1.2rem;color:var(--green);font-weight:800;font-size:1.1rem;">~₹11–22 / month</div>
+      </div>
+
+      <div class="step-card" style="border-color:rgba(88,166,255,.2);">
+        <span class="step-icon">🖥️</span>
+        <h3>The Steady Builder</h3>
+        <p>Full-time dev, 4–6h of active build / test / install time daily.</p>
+        <div style="margin-top:1.2rem;color:var(--blue);font-weight:800;font-size:1.1rem;">~₹42–63 / month</div>
+      </div>
+
+      <div class="step-card" style="border-color:rgba(188,140,255,.2);">
+        <span class="step-icon">⚡</span>
+        <h3>The Power Dev</h3>
+        <p>8–10h/day, heavy CI, multiple repos, Docker builds constantly.</p>
+        <div style="margin-top:1.2rem;color:var(--purple);font-weight:800;font-size:1.1rem;">~₹84–106 / month</div>
+      </div>
+
+    </div>
+    <p style="color:var(--muted);font-size:.78rem;margin-top:1.5rem;text-align:center;">
+      Estimates at 12 slots/hr × ₹0.04/slot × 22 days. <a href="earnings.html" style="color:var(--green);">Full earnings breakdown →</a>
+    </p>
+  </div>
+</section>
+
 <!-- ── TWO PATHS ── -->
 <section id="join">
   <div class="container">
@@ -656,20 +809,51 @@
         <h2>I'm an Advertiser</h2>
         <p class="path-sub">Reach developers at the exact moment they are attentive and idle — not scrolling a feed, not watching a video.</p>
         <ul class="path-perks">
-          <li>Auction-based bidding for slots — pay only what you win</li>
-          <li>Target by language, framework, task type (build / test / install)</li>
-          <li>Format: one line of text + one logo + clickable link — clean, minimal</li>
-          <li>All ad categories accepted — dev tools, crypto, gambling, political & more</li>
-          <li>Age-gated delivery: 18+ audiences unlock all categories automatically</li>
+          <li>Target by task type — build, test, install, or AI tool sessions</li>
+          <li>Verified developer audience — no bots, no proxy traffic</li>
+          <li>One line of text + clickable link — minimal, zero-scroll format</li>
           <li>Real-time impression and click reporting</li>
-          <li>CPM and CPC pricing options available</li>
+          <li>INR pricing, UPI billing — no forex, no Stripe</li>
           <li>Minimum spend as low as ₹500 to start testing</li>
         </ul>
-        <a class="path-cta-adv" href="#advertise">
+        <a class="path-cta-adv" href="advertisers.html">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/></svg>
-          Bid for a Slot →
+          See Advertiser Plans →
         </a>
       </div>
+    </div>
+
+    <!-- Revenue Split Visual -->
+    <div style="
+      margin-top:4rem;
+      background:var(--surface2);border:1px solid var(--border);
+      border-radius:16px;padding:2.5rem 2rem;text-align:center;
+    ">
+      <div class="section-label" style="margin-bottom:.8rem;">Revenue Split</div>
+      <h3 style="font-size:1.4rem;font-weight:800;margin-bottom:2rem;">Every rupee an advertiser pays splits like this:</h3>
+
+      <div style="display:flex;border-radius:100px;overflow:hidden;height:48px;max-width:480px;margin:0 auto 1.5rem;box-shadow:0 0 0 1px var(--border);">
+        <div style="width:80%;background:linear-gradient(90deg,var(--green),#64ffda);display:flex;align-items:center;justify-content:center;font-weight:900;color:#000;font-size:1rem;">
+          You keep 80%
+        </div>
+        <div style="width:20%;background:var(--surface);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--muted);font-size:.85rem;">
+          Platform 20%
+        </div>
+      </div>
+
+      <div style="display:flex;justify-content:center;gap:3rem;flex-wrap:wrap;margin-top:1rem;">
+        <div style="text-align:center;">
+          <div style="font-size:2.2rem;font-weight:900;background:linear-gradient(135deg,var(--green),#64ffda);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">80%</div>
+          <div style="color:var(--muted);font-size:.85rem;margin-top:.3rem;">Goes to you, the developer</div>
+        </div>
+        <div style="text-align:center;">
+          <div style="font-size:2.2rem;font-weight:900;color:var(--muted);">20%</div>
+          <div style="color:var(--muted);font-size:.85rem;margin-top:.3rem;">Platform infrastructure &amp; ops</div>
+        </div>
+      </div>
+      <p style="color:var(--muted);font-size:.82rem;margin-top:1.5rem;">
+        The split is hardcoded in the open-source server — anyone can audit it on GitHub.
+      </p>
     </div>
   </div>
 </section>
@@ -744,6 +928,53 @@
   </div>
 </section>
 
+<!-- ── INDIA ── -->
+<section id="india" style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
+  <div class="container">
+    <div class="section-label">India-First</div>
+    <h2 class="section-title">Built for Indian Developers.</h2>
+    <p class="section-sub">The only developer ad platform with UPI payouts, INR pricing, and an Indian advertiser network. Neither competitor supports this. We do — today.</p>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:1.5rem;margin-top:3rem;">
+
+      <div class="step-card">
+        <span class="step-icon">💸</span>
+        <h3>Payout in 48h, not weeks</h3>
+        <p>Weekly auto-payout to any UPI ID — GPay, PhonePe, Paytm, bank UPI. ₹50 minimum. No Stripe, no dollar conversion, no blocked accounts.</p>
+      </div>
+
+      <div class="step-card">
+        <span class="step-icon">🏢</span>
+        <h3>Indian advertiser network</h3>
+        <p>Hasura, Razorpay, Postman, BrowserStack — Indian SaaS companies already invest in developer audiences. We give them the right channel.</p>
+      </div>
+
+      <div class="step-card">
+        <span class="step-icon">👥</span>
+        <h3>Audience that understands you</h3>
+        <p>India has 17M+ developers — the world's fastest-growing base. DevCut is built by an Indian developer, for the community he lives in.</p>
+      </div>
+
+    </div>
+
+    <div style="
+      margin-top:2.5rem;
+      background:rgba(0,230,118,.04);border:1px solid rgba(0,230,118,.15);
+      border-radius:12px;padding:1.5rem 2rem;
+      display:flex;align-items:flex-start;gap:1rem;flex-wrap:wrap;
+    ">
+      <span style="font-size:1.5rem;flex-shrink:0;">⚠️</span>
+      <div>
+        <strong style="color:var(--text);">The Stripe problem is structural, not temporary.</strong>
+        <p style="color:var(--muted);font-size:.9rem;margin-top:.4rem;line-height:1.6;">
+          Stripe Connect hasn't supported Indian developer payouts due to RBI regulations. Indian developers who earned on other platforms can't withdraw.
+          DevCut uses Razorpay X — the infrastructure that actually works here.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ── OPEN SOURCE ── -->
 <section id="open-source">
   <div class="container">
@@ -776,6 +1007,18 @@
     <p style="color:var(--green);font-size:.82rem;margin-bottom:2rem;font-weight:600;">
       <span id="earlyCount">—</span> spots remaining
     </p>
+    <script>
+      // Fetch count as soon as this element parses — no waiting for the rest of the page
+      (function() {
+        const el = document.getElementById('earlyCount');
+        fetch('https://waitwage-production.up.railway.app/v1/public/stats', {
+          cache: 'no-store', signal: AbortSignal.timeout(5000)
+        }).then(r => r.json()).then(d => {
+          const used = d.totalSignups || 0;
+          el.textContent = Math.max(0, 500 - used) + ' of 500';
+        }).catch(() => {}); // keep '—' on error, form IIFE will retry
+      })();
+    </script>
 
     <form id="earlyForm" style="display:flex;flex-direction:column;gap:1rem;">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
@@ -811,9 +1054,9 @@
     </form>
 
     <div id="formSuccess" style="display:none;margin-top:1.5rem;padding:1.2rem;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);border-radius:12px;">
-      <div style="font-size:1.8rem;margin-bottom:.4rem;">🎉</div>
-      <div style="font-weight:700;color:var(--green);font-size:1.05rem;">You're on the list!</div>
-      <div style="color:var(--muted);font-size:.9rem;margin-top:.4rem;">We'll reach out to you personally before the public launch.</div>
+      <div style="font-size:1.8rem;margin-bottom:.4rem;" id="successIcon">🎉</div>
+      <div style="font-weight:700;color:var(--green);font-size:1.05rem;" id="successTitle">You're on the list!</div>
+      <div style="color:var(--muted);font-size:.9rem;margin-top:.4rem;" id="successMsg">Check your inbox — your invite code is on its way.</div>
     </div>
     <div id="formError" style="display:none;margin-top:1rem;color:var(--orange);font-size:.88rem;"></div>
   </div>
@@ -849,6 +1092,14 @@
         <h3>What kind of ads are allowed?</h3>
         <p>All categories are welcome — dev tools, SaaS, crypto, gambling, political, and more. Each ad is one line of text, one logo, and a clickable link. The only rule: developers under 18 see developer-focused ads only; unrestricted categories are shown exclusively to verified 18+ users.</p>
       </div>
+      <div class="faq-item">
+        <h3>How do I trust that the payout math is real?</h3>
+        <p>The impression counter, earnings tally, and payout pipeline are all in the open-source server repo. You can run your own backend with your own Razorpay keys — complete zero-trust option. We also maintain a public ledger of total ₹ distributed, updated weekly.</p>
+      </div>
+      <div class="faq-item">
+        <h3>What if I don't have a UPI ID?</h3>
+        <p>Any Indian bank account comes with a UPI ID automatically (check your bank app → Payments → UPI). Supported: GPay, PhonePe, Paytm, BHIM, Cred, and any UPI-enabled banking app. Non-Indian developers: international payout options are on the roadmap for Q3 2026.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -859,11 +1110,14 @@
   <p style="margin-top:.4rem;">Open source · MIT licence · Built for developers, by a developer</p>
   <div style="margin-top:1rem;display:flex;gap:1.5rem;justify-content:center;flex-wrap:wrap;">
     <a href="https://github.com/gouravgujariya/devcut" target="_blank" rel="noopener">GitHub</a>
+    <a href="how-it-works.html">How It Works</a>
+    <a href="earnings.html">Earnings</a>
+    <a href="advertisers.html">Advertise</a>
+    <a href="#india">India</a>
     <a href="mailto:er.gouravgujariya@gmail.com">Contact</a>
-    <a href="#advertise">Advertise</a>
     <a href="#faq">FAQ</a>
   </div>
-  <p style="margin-top:1.5rem;font-size:.78rem;color:#3e4450;">© 2026 DevCut. Making idle time less idle.</p>
+  <p style="margin-top:1.5rem;font-size:.78rem;color:#3e4450;">© 2026 DevCut. Making idle time less idle. &nbsp;·&nbsp; <span style="font-family:monospace;opacity:.4;" title="git commit">v52758c3</span></p>
 </footer>
 
 <script>
@@ -1029,14 +1283,18 @@ setInterval(() => {
   const errorEl   = document.getElementById('formError');
   const countEl   = document.getElementById('earlyCount');
 
+  /* fetch current sign-up count */
   async function fetchCount() {
     try {
-      const res = await fetch(`${BACKEND}/v1/public/stats`);
+      const res = await fetch(`${BACKEND}/v1/public/stats`, {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(4000),
+      });
       const data = await res.json();
-      const used = data.totalDevs || 0;
+      const used = data.totalSignups || 0;
       const remaining = Math.max(0, TOTAL_SPOTS - used);
       countEl.textContent = remaining + ' of ' + TOTAL_SPOTS;
-    } catch { countEl.textContent = TOTAL_SPOTS + ' of ' + TOTAL_SPOTS; }
+    } catch { /* keep current value */ }
   }
   fetchCount();
 
@@ -1065,10 +1323,20 @@ setInterval(() => {
 
       if (res.ok) {
         form.style.display = 'none';
+        // Tailor message based on what backend reported
+        if (body.resent) {
+          document.getElementById('successIcon').textContent = '📬';
+          document.getElementById('successTitle').textContent = 'Already registered!';
+          document.getElementById('successMsg').textContent = body.email_sent
+            ? 'We resent your invite code — check your inbox.'
+            : 'You\'re on the list. Invite code coming soon.';
+        } else if (!body.email_sent) {
+          document.getElementById('successMsg').textContent = 'You\'re registered! Your invite code will be emailed to you shortly.';
+        }
         successEl.style.display = 'block';
         fetchCount();
       } else {
-        throw new Error(body.message || 'Something went wrong. Please try again.');
+        throw new Error(body.error || body.message || 'Something went wrong. Please try again.');
       }
     } catch (err) {
       errorEl.textContent = err.message;
@@ -1078,6 +1346,44 @@ setInterval(() => {
     }
   });
 })();
+
+/* ── EARNINGS CALCULATOR ── */
+(function () {
+  const slider     = document.getElementById('hoursSlider');
+  const calcRupees = document.getElementById('calcRupees');
+  const calcDollars = document.getElementById('calcDollars');
+  const hoursLabel  = document.getElementById('hoursLabel');
+  const INR_PER_SLOT = 0.04, SLOTS_PER_HOUR = 12, DAYS = 22, USD_RATE = 84;
+
+  function update() {
+    const h   = +slider.value;
+    const inr = h * SLOTS_PER_HOUR * INR_PER_SLOT * DAYS;
+    const usd = inr / USD_RATE;
+    calcRupees.textContent  = '₹' + Math.round(inr);
+    calcDollars.textContent = '$' + usd.toFixed(2);
+    hoursLabel.textContent  = h + 'h / day';
+    const out = document.getElementById('calcOutput');
+    out.style.boxShadow = '0 0 30px rgba(0,230,118,.15)';
+    setTimeout(() => { out.style.boxShadow = 'none'; }, 350);
+  }
+
+  if (slider) { slider.addEventListener('input', update); update(); }
+})();
+
+/* ── INSTALL COPY BUTTON ── */
+function copyInstall() {
+  navigator.clipboard.writeText('ext install devcut.devcut').then(() => {
+    const btn = document.getElementById('copyInstallBtn');
+    btn.textContent = 'Copied ✓';
+    btn.style.color = 'var(--green)';
+    btn.style.borderColor = 'var(--green)';
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.style.color = '';
+      btn.style.borderColor = '';
+    }, 2000);
+  });
+}
 
 /* ── SCROLL REVEAL ── */
 const revealEls = document.querySelectorAll('.step-card, .path-card, .faq-item, .oss-card');
