@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>How It Works — DevCut</title>
+  <meta name="description" content="How DevCut turns your VS Code build time into passive income. The 4-step loop, privacy details, and technical explainer." />
+  <link rel="stylesheet" href="shared.css" />
+  <style>
+    .hero { min-height: 55vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8rem 2rem 4rem; }
+    h1 { font-size: clamp(2.2rem, 5.5vw, 3.8rem); font-weight: 900; line-height: 1.08; letter-spacing: -.03em; max-width: 720px; }
+    h1 .highlight { background: linear-gradient(135deg, var(--green) 0%, #64ffda 50%, var(--purple) 100%); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: gradient-shift 4s linear infinite; }
+    .hero-sub { margin-top: 1.2rem; font-size: 1.1rem; color: var(--muted); max-width: 500px; }
+
+    .big-steps { display: flex; flex-direction: column; gap: 3rem; margin-top: 3rem; }
+    .big-step { display: flex; gap: 2rem; align-items: flex-start; flex-wrap: wrap; }
+    .big-step-num { font-size: 5rem; font-weight: 900; line-height: 1; color: rgba(0,230,118,.1); flex-shrink: 0; width: 80px; text-align: center; }
+    .big-step-content h3 { font-size: 1.4rem; font-weight: 800; margin-bottom: .5rem; }
+    .big-step-content p { color: var(--muted); font-size: 1rem; line-height: 1.6; max-width: 580px; }
+
+    .privacy-table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; }
+    .privacy-table th { text-align: left; padding: .7rem 1rem; color: var(--muted); font-weight: 600; font-size: .85rem; border-bottom: 1px solid var(--border); }
+    .privacy-table td { padding: .7rem 1rem; font-size: .9rem; border-bottom: 1px solid rgba(48,54,61,.5); }
+    .privacy-table td:last-child { text-align: center; }
+    .yes-badge { color: var(--green); font-weight: 700; }
+    .no-badge  { color: var(--muted); }
+
+    .faq-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-top: 3rem; }
+    @media (max-width: 700px) { .faq-grid { grid-template-columns: 1fr; } }
+    .faq-item { background: rgba(22,27,34,.7); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; backdrop-filter: blur(4px); }
+    .faq-item h3 { font-size: 1rem; font-weight: 700; margin-bottom: .5rem; }
+    .faq-item p  { color: var(--muted); font-size: .9rem; line-height: 1.55; }
+  </style>
+</head>
+<body>
+
+<div class="orb-container">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+  <div class="orb orb-4"></div>
+</div>
+<canvas id="bg-canvas"></canvas>
+
+<nav>
+  <a class="nav-logo" href="index.html">
+    <span class="live-dot"></span>
+    <span class="logo-w">Dev</span>Cut
+  </a>
+  <div class="nav-links">
+    <a href="how-it-works.html" class="hide-mobile" style="color:var(--text);">How It Works</a>
+    <a href="earnings.html" class="hide-mobile">Earnings</a>
+    <a href="index.html#install" class="hide-mobile">Install</a>
+    <a href="advertisers.html" class="hide-mobile">Advertise</a>
+    <a class="nav-cta" href="index.html#early-access">Early Access</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-badge fade-up">⚙️ Technical Explainer</div>
+  <h1 class="fade-up delay-1">The 4-step loop that turns<br/><span class="highlight">dead build time into income.</span></h1>
+  <p class="hero-sub fade-up delay-2">Transparent, opt-in, open source. Here's exactly what happens inside your editor.</p>
+</section>
+
+<!-- The 4 steps, expanded -->
+<section style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
+  <div class="container">
+    <div class="section-label">The Loop</div>
+    <h2 class="section-title">Four steps. Zero friction.</h2>
+
+    <div class="big-steps">
+      <div class="big-step">
+        <div class="big-step-num">01</div>
+        <div class="big-step-content">
+          <h3>📦 Install the extension</h3>
+          <p>One click from the VS Code Marketplace — or paste <code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">ext install devcut.devcut</code> in the command palette. The extension is open source (MIT), zero telemetry beyond impression counting, and stores nothing on your local machine beyond a pseudonymous user ID.</p>
+        </div>
+      </div>
+
+      <div class="big-step">
+        <div class="big-step-num">02</div>
+        <div class="big-step-content">
+          <h3>⚙️ Run your tasks normally</h3>
+          <p>Build, test, install — exactly as you do today. DevCut hooks into the VS Code Tasks API (<code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">onDidStartTask</code> / <code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">onDidEndTask</code> events). When a task runs for longer than 3 seconds, the extension makes a single HTTP call to fetch an ad line — nothing is sent before that threshold. No background polling. No always-on connection.</p>
+        </div>
+      </div>
+
+      <div class="big-step">
+        <div class="big-step-num">03</div>
+        <div class="big-step-content">
+          <h3>📈 Impressions = earnings</h3>
+          <p>Every 30-second slot where an ad is visible is one impression. At the end of the slot, a lightweight POST records the impression ID and your pseudonymous user ID — no task content, no code, no keystrokes, nothing personal. Clicks earn more: when you click an ad, a click event is recorded (again, just the ad ID and your user ID). Your running balance is visible in the Command Palette at any time via <strong style="color:var(--text);">DevCut: Show Earnings</strong>.</p>
+        </div>
+      </div>
+
+      <div class="big-step">
+        <div class="big-step-num">04</div>
+        <div class="big-step-content">
+          <h3>💸 Withdraw to UPI</h3>
+          <p>Set your UPI ID once in the extension settings (<code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">devcut.upiId</code>). When your balance crosses ₹50, we trigger a Razorpay X payout automatically — weekly. You get a GPay / PhonePe / Paytm notification within 48h. No bank forms. No SWIFT codes. No waiting 14 days.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Privacy callout -->
+<section>
+  <div class="container">
+    <div class="section-label">Privacy</div>
+    <h2 class="section-title">Exactly what leaves your machine.</h2>
+    <p class="section-sub">Nothing about your code, teammates, or projects ever leaves your editor. Here is the complete list.</p>
+
+    <div style="overflow-x:auto;margin-top:2rem;">
+      <table class="privacy-table">
+        <thead>
+          <tr>
+            <th>Data</th>
+            <th>Why it's needed</th>
+            <th>Sent to server?</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Pseudonymous user ID</strong> (random UUID, generated locally on first install)</td>
+            <td>Associate impressions and earnings with your account without requiring an email or login</td>
+            <td class="yes-badge">Yes — every request</td>
+          </tr>
+          <tr>
+            <td><strong>Task event type</strong> (build / test / install — derived from task name regex)</td>
+            <td>Fetch the right ad category for the slot type</td>
+            <td class="yes-badge">Yes — on task start</td>
+          </tr>
+          <tr>
+            <td><strong>Impression duration</strong> (seconds the ad was visible)</td>
+            <td>Validate the impression and calculate earnings</td>
+            <td class="yes-badge">Yes — on task end</td>
+          </tr>
+          <tr>
+            <td><strong>UPI ID</strong> (only if you set one)</td>
+            <td>Route your payout to the right account</td>
+            <td class="yes-badge">Yes — on payout trigger only</td>
+          </tr>
+          <tr>
+            <td>Code content, file names, or repo names</td>
+            <td>—</td>
+            <td class="no-badge">Never</td>
+          </tr>
+          <tr>
+            <td>Keystrokes or editor activity</td>
+            <td>—</td>
+            <td class="no-badge">Never</td>
+          </tr>
+          <tr>
+            <td>Team members, Git commits, or PR data</td>
+            <td>—</td>
+            <td class="no-badge">Never</td>
+          </tr>
+          <tr>
+            <td>IP address (stored)</td>
+            <td>—</td>
+            <td class="no-badge">Received but not logged</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div style="
+      margin-top:2rem;
+      background:rgba(0,230,118,.04);border:1px solid rgba(0,230,118,.15);
+      border-radius:12px;padding:1.5rem 2rem;
+    ">
+      <strong style="color:var(--text);">Zero-trust option:</strong>
+      <span style="color:var(--muted);font-size:.9rem;"> The entire server is open source. You can fork it, plug in your own Razorpay keys, and run a self-hosted instance. The extension accepts a custom server URL via <code>devcut.backendUrl</code> in settings.</span>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ — technical -->
+<section style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
+  <div class="container">
+    <div class="section-label">Technical FAQ</div>
+    <h2 class="section-title">For the curious</h2>
+    <div class="faq-grid">
+      <div class="faq-item">
+        <h3>Does the extension slow down VS Code?</h3>
+        <p>No. It only makes a single lightweight HTTP call when a task starts (to fetch the ad line) and another when it ends (to record the impression). No background polling, no analytics SDK, no always-on WebSocket.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Can I turn it off during focus time?</h3>
+        <p>Yes. One command — <code>DevCut: Toggle</code> — or flip <code>devcut.enabled</code> to <code>false</code> in settings. Earnings pause instantly and resume when you re-enable. The status bar item disappears completely while disabled.</p>
+      </div>
+      <div class="faq-item">
+        <h3>How does the second-price auction work?</h3>
+        <p>At each impression, the server ranks all active bids for the matching slot type. The highest bidder wins and pays ₹0.01 above the second-highest bid — never more than their stated max. This prevents advertisers from overpaying and encourages honest bidding.</p>
+      </div>
+      <div class="faq-item">
+        <h3>What task types trigger a slot?</h3>
+        <p>Any VS Code task that fires <code>onDidStartTask</code> and runs for &gt;3 seconds. This includes <code>npm run build</code>, <code>cargo build</code>, <code>jest</code>, <code>pytest</code>, <code>docker pull</code>, <code>npm install</code>, and any custom task in your <code>tasks.json</code>. You can whitelist or blacklist specific task names in settings.</p>
+      </div>
+      <div class="faq-item">
+        <h3>How are impressions verified?</h3>
+        <p>The server issues a signed token with each ad fetch. The extension sends that token back when recording the impression, along with the measured slot duration. The server verifies the signature and rejects impressions that were never fetched or that arrive outside the valid time window.</p>
+      </div>
+      <div class="faq-item">
+        <h3>Can I audit the payout math?</h3>
+        <p>Yes — the impression counter, earnings tally, and Razorpay payout trigger are all in the open-source server repo. You can also run <code>DevCut: Show Earnings Breakdown</code> in the Command Palette to see a per-day log of slots, impressions, clicks, and accrued balance.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section>
+  <div class="container" style="text-align:center;max-width:600px;">
+    <h2 class="section-title">Ready to try it?</h2>
+    <p class="section-sub" style="margin:.8rem auto 2rem;">Open VS Code, press ⌘P, paste the install command.</p>
+    <div style="
+      background:var(--surface2);border:1px solid var(--border);
+      border-radius:12px;padding:1.2rem 1.5rem;
+      display:flex;align-items:center;justify-content:space-between;gap:1rem;
+      font-family:'Fira Code','Cascadia Code',monospace;font-size:1rem;
+      max-width:480px;margin:0 auto;
+    ">
+      <span><span style="color:var(--green);">ext install</span> <span style="color:var(--text);">devcut.devcut</span></span>
+      <button id="copyBtn" onclick="copyCmd()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:.35rem .75rem;font-size:.8rem;cursor:pointer;transition:all .2s;font-family:inherit;">Copy</button>
+    </div>
+    <p style="color:var(--muted);font-size:.82rem;margin-top:1rem;">
+      Or <a href="index.html#early-access" style="color:var(--green);">join the early access list →</a>
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-logo">⚡ <span>Dev</span>Cut</div>
+  <p style="margin-top:.4rem;">Open source · MIT licence · Built for developers, by a developer</p>
+  <div style="margin-top:1rem;display:flex;gap:1.5rem;justify-content:center;flex-wrap:wrap;">
+    <a href="how-it-works.html">How It Works</a>
+    <a href="earnings.html">Earnings</a>
+    <a href="advertisers.html">Advertise</a>
+    <a href="index.html#india">India</a>
+    <a href="https://github.com/gouravgujariya/devcut" target="_blank" rel="noopener">GitHub</a>
+    <a href="mailto:er.gouravgujariya@gmail.com">Contact</a>
+    <a href="index.html#faq">FAQ</a>
+  </div>
+  <p style="margin-top:1.5rem;font-size:.78rem;color:#3e4450;">© 2026 DevCut. Making idle time less idle.</p>
+</footer>
+
+<script>
+/* ── CANVAS PARTICLE NETWORK ── */
+(function () {
+  const canvas = document.getElementById('bg-canvas');
+  const ctx = canvas.getContext('2d');
+  let W, H, particles, mouse = { x: -999, y: -999 };
+  const COLORS = ['#00e676', '#58a6ff', '#bc8cff'];
+  const SYMBOLS = ['₹', '$', '>', '{', '}', '//', '→', '⚡'];
+  function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+  function createParticle() {
+    const isSymbol = Math.random() < 0.12;
+    return { x:Math.random()*W, y:Math.random()*H, vx:(Math.random()-.5)*.4, vy:(Math.random()-.5)*.4,
+      r:isSymbol?0:Math.random()*1.8+.6, symbol:isSymbol?SYMBOLS[Math.floor(Math.random()*SYMBOLS.length)]:null,
+      color:COLORS[Math.floor(Math.random()*COLORS.length)], alpha:Math.random()*.5+.15 };
+  }
+  function init() { resize(); particles = Array.from({length:Math.min(Math.floor(W*H/14000),90)},createParticle); }
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    for(let i=0;i<particles.length;i++) for(let j=i+1;j<particles.length;j++){
+      const dx=particles[i].x-particles[j].x,dy=particles[i].y-particles[j].y,dist=Math.sqrt(dx*dx+dy*dy);
+      if(dist<140){ctx.beginPath();ctx.strokeStyle=particles[i].color;ctx.globalAlpha=(1-dist/140)*.08;ctx.lineWidth=.5;ctx.moveTo(particles[i].x,particles[i].y);ctx.lineTo(particles[j].x,particles[j].y);ctx.stroke();}
+    }
+    ctx.globalAlpha=1;
+    for(const p of particles){
+      const mdx=p.x-mouse.x,mdy=p.y-mouse.y,mdist=Math.sqrt(mdx*mdx+mdy*mdy);
+      if(mdist<120){const force=(120-mdist)/120*.8;p.vx+=(mdx/mdist)*force*.06;p.vy+=(mdy/mdist)*force*.06;}
+      const speed=Math.sqrt(p.vx*p.vx+p.vy*p.vy);
+      if(speed>1.2){p.vx=(p.vx/speed)*1.2;p.vy=(p.vy/speed)*1.2;}
+      p.x+=p.vx;p.y+=p.vy;
+      if(p.x<-10)p.x=W+10;if(p.x>W+10)p.x=-10;if(p.y<-10)p.y=H+10;if(p.y>H+10)p.y=-10;
+      ctx.globalAlpha=p.alpha;
+      if(p.symbol){ctx.fillStyle=p.color;ctx.font='11px monospace';ctx.fillText(p.symbol,p.x,p.y);}
+      else{ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();}
+    }
+    ctx.globalAlpha=1;requestAnimationFrame(draw);
+  }
+  window.addEventListener('resize',resize);
+  window.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
+  init();draw();
+})();
+
+/* ── COPY BUTTON ── */
+function copyCmd() {
+  navigator.clipboard.writeText('ext install devcut.devcut').then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'Copied ✓';
+    btn.style.color = 'var(--green)';
+    btn.style.borderColor = 'var(--green)';
+    setTimeout(() => { btn.textContent = 'Copy'; btn.style.color = ''; btn.style.borderColor = ''; }, 2000);
+  });
+}
+
+/* ── SCROLL REVEAL ── */
+const revealEls = document.querySelectorAll('.faq-item, .big-step');
+const revealObs = new IntersectionObserver((entries) => {
+  entries.forEach((e, i) => {
+    if (e.isIntersecting) {
+      e.target.style.animation = `fade-up .55s ease ${i * 0.06}s forwards`;
+      e.target.style.opacity = '0';
+      revealObs.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.1 });
+revealEls.forEach(el => revealObs.observe(el));
+</script>
+</body>
+</html>

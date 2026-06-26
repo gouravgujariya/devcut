@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Earnings Calculator — DevCut</title>
+  <meta name="description" content="See exactly how much you can earn with DevCut. Interactive calculator for developers: daily, weekly, and monthly payout estimates." />
+  <link rel="stylesheet" href="shared.css" />
+  <style>
+    .hero { min-height: 55vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8rem 2rem 4rem; }
+    h1 { font-size: clamp(2.4rem, 6vw, 4rem); font-weight: 900; line-height: 1.08; letter-spacing: -.03em; max-width: 720px; }
+    h1 .highlight { background: linear-gradient(135deg, var(--green) 0%, #64ffda 50%, var(--blue) 100%); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: gradient-shift 4s linear infinite; }
+    .hero-sub { margin-top: 1.2rem; font-size: 1.1rem; color: var(--muted); max-width: 500px; }
+
+    .earnings-table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: .9rem; }
+    .earnings-table th, .earnings-table td { padding: .7rem 1rem; text-align: right; border-bottom: 1px solid var(--border); }
+    .earnings-table th { color: var(--muted); font-weight: 600; font-size: .85rem; }
+    .earnings-table td:first-child, .earnings-table th:first-child { text-align: left; }
+    .earnings-table .total-row td { font-weight: 800; color: var(--green); border-top: 2px solid var(--border); }
+    .earnings-table tbody tr:hover { background: rgba(255,255,255,.02); }
+
+    .persona-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem; margin-top: 2.5rem; }
+
+    .payout-steps { display: flex; gap: 0; margin-top: 3rem; flex-wrap: wrap; }
+    .payout-step { flex: 1; min-width: 160px; padding: 1.5rem; text-align: center; position: relative; }
+    .payout-step:not(:last-child)::after { content: '→'; position: absolute; right: -10px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 1.4rem; }
+    @media (max-width: 600px) { .payout-step:not(:last-child)::after { display: none; } }
+    .payout-step .p-icon { font-size: 2.2rem; margin-bottom: .6rem; display: block; }
+    .payout-step h4 { font-size: .95rem; font-weight: 700; margin-bottom: .3rem; }
+    .payout-step p { color: var(--muted); font-size: .82rem; line-height: 1.45; }
+  </style>
+</head>
+<body>
+
+<div class="orb-container">
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+  <div class="orb orb-4"></div>
+</div>
+<canvas id="bg-canvas"></canvas>
+
+<nav>
+  <a class="nav-logo" href="index.html">
+    <span class="live-dot"></span>
+    <span class="logo-w">Dev</span>Cut
+  </a>
+  <div class="nav-links">
+    <a href="how-it-works.html" class="hide-mobile">How It Works</a>
+    <a href="earnings.html" class="hide-mobile" style="color:var(--text);">Earnings</a>
+    <a href="index.html#install" class="hide-mobile">Install</a>
+    <a href="advertisers.html" class="hide-mobile">Advertise</a>
+    <a class="nav-cta" href="index.html#early-access">Early Access</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-badge fade-up">💸 Earnings Calculator</div>
+  <h1 class="fade-up delay-1">Every build makes<br/>you <span class="highlight">real money.</span></h1>
+  <p class="hero-sub fade-up delay-2">See your exact monthly payout before you install anything.</p>
+</section>
+
+<!-- Calculator -->
+<section style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
+  <div class="container" style="max-width:780px;">
+    <div class="section-label">Interactive Estimator</div>
+    <h2 class="section-title">Slide. See your number.</h2>
+    <p class="section-sub">Based on 12 ad slots/hr × ₹0.04/slot × 22 working days/month.</p>
+
+    <div style="margin-top:2.5rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem;">
+        <span style="color:var(--muted);font-size:.9rem;">Hours per day waiting on builds/tests</span>
+        <strong id="hoursLabel" style="color:var(--green);font-size:1.2rem;">4h</strong>
+      </div>
+      <input type="range" id="hoursSlider" min="1" max="10" value="4" step="1"
+             style="width:100%;accent-color:var(--green);cursor:pointer;height:6px;">
+      <div style="display:flex;justify-content:space-between;color:var(--muted);font-size:.78rem;margin-top:.5rem;">
+        <span>1h</span><span>2h</span><span>3h</span><span>4h</span><span>5h</span><span>6h</span><span>7h</span><span>8h</span><span>9h</span><span>10h</span>
+      </div>
+    </div>
+
+    <!-- Output cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin-top:2.5rem;">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;text-align:center;">
+        <div id="calcDaily" style="font-size:2rem;font-weight:900;color:var(--green);">₹1.92</div>
+        <div style="color:var(--muted);font-size:.82rem;margin-top:.3rem;">per day</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;text-align:center;">
+        <div id="calcWeekly" style="font-size:2rem;font-weight:900;color:var(--blue);">₹9.60</div>
+        <div style="color:var(--muted);font-size:.82rem;margin-top:.3rem;">per week</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid rgba(0,230,118,.3);border-radius:12px;padding:1.5rem;text-align:center;box-shadow:0 0 30px rgba(0,230,118,.06);">
+        <div id="calcMonthly" style="font-size:2rem;font-weight:900;background:linear-gradient(135deg,var(--green),#64ffda);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">₹42</div>
+        <div style="color:var(--muted);font-size:.82rem;margin-top:.3rem;">per month (INR)</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:1.5rem;text-align:center;">
+        <div id="calcUSD" style="font-size:2rem;font-weight:900;color:var(--purple);">$0.50</div>
+        <div style="color:var(--muted);font-size:.82rem;margin-top:.3rem;">per month (USD)</div>
+      </div>
+    </div>
+
+    <!-- Breakdown table -->
+    <table class="earnings-table" style="margin-top:2.5rem;">
+      <thead>
+        <tr>
+          <th>Component</th>
+          <th>Per day</th>
+          <th>Per month</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Impression earnings (₹0.04 × <span id="tSlots">48</span> slots)</td>
+          <td id="tImprDay">₹1.92</td>
+          <td id="tImprMonth">₹42</td>
+        </tr>
+        <tr>
+          <td>Click bonus (est. 2% CTR × ₹0.20/click)</td>
+          <td id="tClickDay">₹0.19</td>
+          <td id="tClickMonth">₹4</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr class="total-row">
+          <td>Total estimate</td>
+          <td id="tTotalDay">₹2.11</td>
+          <td id="tTotalMonth">₹46</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <p style="color:var(--muted);font-size:.78rem;margin-top:1rem;">
+      Click bonus assumes 2% click-through rate at ₹0.20 per click. Actual CTR varies by advertiser category. USD at ≈₹84.
+    </p>
+  </div>
+</section>
+
+<!-- Persona Cards -->
+<section>
+  <div class="container">
+    <div class="section-label">Who earns what</div>
+    <h2 class="section-title">Find your developer type</h2>
+    <p class="section-sub">These estimates include impression + click earnings at typical CTR.</p>
+    <div class="persona-grid">
+
+      <div class="step-card" style="border-color:rgba(0,230,118,.2);">
+        <span class="step-icon">☕</span>
+        <h3>The Dabbler</h3>
+        <p>Side projects on weekends. 1–2h of builds/tests per day, sporadic CI, mostly local dev.</p>
+        <div style="margin-top:1.5rem;">
+          <div style="font-size:1.6rem;font-weight:900;color:var(--green);">₹11–22 / mo</div>
+          <div style="color:var(--muted);font-size:.8rem;margin-top:.2rem;">≈ $0.13–0.26</div>
+        </div>
+      </div>
+
+      <div class="step-card" style="border-color:rgba(88,166,255,.2);">
+        <span class="step-icon">🖥️</span>
+        <h3>The Steady Builder</h3>
+        <p>Full-time dev. 4–6h of active build / test / install time daily across multiple projects.</p>
+        <div style="margin-top:1.5rem;">
+          <div style="font-size:1.6rem;font-weight:900;color:var(--blue);">₹42–63 / mo</div>
+          <div style="color:var(--muted);font-size:.8rem;margin-top:.2rem;">≈ $0.50–0.75</div>
+        </div>
+      </div>
+
+      <div class="step-card" style="border-color:rgba(188,140,255,.2);">
+        <span class="step-icon">⚡</span>
+        <h3>The Power Dev</h3>
+        <p>8–10h/day. Heavy CI pipelines, Docker builds, multiple repos, test-heavy teams.</p>
+        <div style="margin-top:1.5rem;">
+          <div style="font-size:1.6rem;font-weight:900;color:var(--purple);">₹84–106 / mo</div>
+          <div style="color:var(--muted);font-size:.8rem;margin-top:.2rem;">≈ $1.00–1.26</div>
+        </div>
+      </div>
+
+      <div class="step-card" style="border-color:rgba(247,129,102,.2);">
+        <span class="step-icon">🏢</span>
+        <h3>The Team Lead</h3>
+        <p>Your whole team earns and pools. 5 devs × 4h/day = ₹210+/mo shared or split.</p>
+        <div style="margin-top:1.5rem;">
+          <div style="font-size:1.6rem;font-weight:900;color:var(--orange);">₹210+ / mo</div>
+          <div style="color:var(--muted);font-size:.8rem;margin-top:.2rem;">Team pooling supported</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- Payout Timeline -->
+<section style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
+  <div class="container">
+    <div class="section-label">How You Get Paid</div>
+    <h2 class="section-title">From impression to UPI — automatically</h2>
+    <div class="payout-steps">
+      <div class="payout-step">
+        <span class="p-icon">⚙️</span>
+        <h4>Build runs</h4>
+        <p>Your task triggers an ad slot in the status bar</p>
+      </div>
+      <div class="payout-step">
+        <span class="p-icon">📈</span>
+        <h4>Impression recorded</h4>
+        <p>Balance increments in real time, visible in Command Palette</p>
+      </div>
+      <div class="payout-step">
+        <span class="p-icon">🏦</span>
+        <h4>Balance accumulates</h4>
+        <p>Earnings pool in your account. ₹50 minimum to trigger payout</p>
+      </div>
+      <div class="payout-step">
+        <span class="p-icon">📱</span>
+        <h4>UPI notification</h4>
+        <p>Weekly auto-payout to your GPay / PhonePe / Paytm / bank UPI</p>
+      </div>
+    </div>
+    <div style="text-align:center;margin-top:3rem;">
+      <a class="btn-primary" href="index.html#early-access">Join Early Access →</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-logo">⚡ <span>Dev</span>Cut</div>
+  <p style="margin-top:.4rem;">Open source · MIT licence · Built for developers, by a developer</p>
+  <div style="margin-top:1rem;display:flex;gap:1.5rem;justify-content:center;flex-wrap:wrap;">
+    <a href="how-it-works.html">How It Works</a>
+    <a href="earnings.html">Earnings</a>
+    <a href="advertisers.html">Advertise</a>
+    <a href="index.html#india">India</a>
+    <a href="https://github.com/gouravgujariya/devcut" target="_blank" rel="noopener">GitHub</a>
+    <a href="mailto:er.gouravgujariya@gmail.com">Contact</a>
+    <a href="index.html#faq">FAQ</a>
+  </div>
+  <p style="margin-top:1.5rem;font-size:.78rem;color:#3e4450;">© 2026 DevCut. Making idle time less idle.</p>
+</footer>
+
+<script>
+/* ── CANVAS PARTICLE NETWORK ── */
+(function () {
+  const canvas = document.getElementById('bg-canvas');
+  const ctx = canvas.getContext('2d');
+  let W, H, particles, mouse = { x: -999, y: -999 };
+  const COLORS = ['#00e676', '#58a6ff', '#bc8cff'];
+  const SYMBOLS = ['₹', '$', '>', '{', '}', '//', '→', '⚡'];
+  function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+  function createParticle() {
+    const isSymbol = Math.random() < 0.12;
+    return { x: Math.random()*W, y: Math.random()*H, vx:(Math.random()-.5)*.4, vy:(Math.random()-.5)*.4,
+      r: isSymbol?0:Math.random()*1.8+.6, symbol:isSymbol?SYMBOLS[Math.floor(Math.random()*SYMBOLS.length)]:null,
+      color:COLORS[Math.floor(Math.random()*COLORS.length)], alpha:Math.random()*.5+.15 };
+  }
+  function init() { resize(); particles = Array.from({length:Math.min(Math.floor(W*H/14000),90)},createParticle); }
+  function draw() {
+    ctx.clearRect(0,0,W,H);
+    for(let i=0;i<particles.length;i++) for(let j=i+1;j<particles.length;j++) {
+      const dx=particles[i].x-particles[j].x, dy=particles[i].y-particles[j].y;
+      const dist=Math.sqrt(dx*dx+dy*dy);
+      if(dist<140){ctx.beginPath();ctx.strokeStyle=particles[i].color;ctx.globalAlpha=(1-dist/140)*.08;ctx.lineWidth=.5;ctx.moveTo(particles[i].x,particles[i].y);ctx.lineTo(particles[j].x,particles[j].y);ctx.stroke();}
+    }
+    ctx.globalAlpha=1;
+    for(const p of particles){
+      const mdx=p.x-mouse.x,mdy=p.y-mouse.y,mdist=Math.sqrt(mdx*mdx+mdy*mdy);
+      if(mdist<120){const force=(120-mdist)/120*.8;p.vx+=(mdx/mdist)*force*.06;p.vy+=(mdy/mdist)*force*.06;}
+      const speed=Math.sqrt(p.vx*p.vx+p.vy*p.vy);
+      if(speed>1.2){p.vx=(p.vx/speed)*1.2;p.vy=(p.vy/speed)*1.2;}
+      p.x+=p.vx;p.y+=p.vy;
+      if(p.x<-10)p.x=W+10;if(p.x>W+10)p.x=-10;if(p.y<-10)p.y=H+10;if(p.y>H+10)p.y=-10;
+      ctx.globalAlpha=p.alpha;
+      if(p.symbol){ctx.fillStyle=p.color;ctx.font='11px monospace';ctx.fillText(p.symbol,p.x,p.y);}
+      else{ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();}
+    }
+    ctx.globalAlpha=1;requestAnimationFrame(draw);
+  }
+  window.addEventListener('resize',resize);
+  window.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
+  init();draw();
+})();
+
+/* ── EARNINGS CALCULATOR ── */
+(function () {
+  const slider  = document.getElementById('hoursSlider');
+  const label   = document.getElementById('hoursLabel');
+  const INR_PER_SLOT = 0.04, SLOTS_PER_HOUR = 12, DAYS = 22, WEEKS = 4.4, USD_RATE = 84;
+  const CLICK_RATE = 0.02, CLICK_EARNINGS = 0.20;
+
+  function update() {
+    const h = +slider.value;
+    const slotsDay   = h * SLOTS_PER_HOUR;
+    const imprDay    = slotsDay * INR_PER_SLOT;
+    const imprMonth  = imprDay * DAYS;
+    const clickDay   = slotsDay * CLICK_RATE * CLICK_EARNINGS;
+    const clickMonth = clickDay * DAYS;
+    const totalDay   = imprDay + clickDay;
+    const totalMonth = imprMonth + clickMonth;
+    const weeklyInr  = totalDay * 5;
+    const usd        = totalMonth / USD_RATE;
+
+    label.textContent               = h + 'h';
+    document.getElementById('calcDaily').textContent    = '₹' + imprDay.toFixed(2);
+    document.getElementById('calcWeekly').textContent   = '₹' + weeklyInr.toFixed(2);
+    document.getElementById('calcMonthly').textContent  = '₹' + Math.round(imprMonth);
+    document.getElementById('calcUSD').textContent      = '$' + usd.toFixed(2);
+    document.getElementById('tSlots').textContent       = slotsDay;
+    document.getElementById('tImprDay').textContent     = '₹' + imprDay.toFixed(2);
+    document.getElementById('tImprMonth').textContent   = '₹' + Math.round(imprMonth);
+    document.getElementById('tClickDay').textContent    = '₹' + clickDay.toFixed(2);
+    document.getElementById('tClickMonth').textContent  = '₹' + Math.round(clickMonth);
+    document.getElementById('tTotalDay').textContent    = '₹' + totalDay.toFixed(2);
+    document.getElementById('tTotalMonth').textContent  = '₹' + Math.round(totalMonth);
+  }
+
+  slider.addEventListener('input', update);
+  update();
+})();
+
+/* ── SCROLL REVEAL ── */
+const revealEls = document.querySelectorAll('.step-card, .payout-step');
+const revealObs = new IntersectionObserver((entries) => {
+  entries.forEach((e, i) => {
+    if (e.isIntersecting) {
+      e.target.style.animation = `fade-up .55s ease ${i * 0.07}s forwards`;
+      e.target.style.opacity = '0';
+      revealObs.unobserve(e.target);
+    }
+  });
+}, { threshold: 0.1 });
+revealEls.forEach(el => revealObs.observe(el));
+</script>
+</body>
+</html>
