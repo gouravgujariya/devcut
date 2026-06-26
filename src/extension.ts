@@ -319,7 +319,7 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       if (result.error === "already_in_team") {
-        vscode.window.showWarningMessage("You are already in a team. Use 'Kickback: Leave Team' first.");
+        vscode.window.showWarningMessage("You are already in a team. Leave it first before joining another.");
         return;
       }
       if (result.error === "already_member") {

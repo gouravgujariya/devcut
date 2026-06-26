@@ -925,7 +925,7 @@
     const method = id ? 'PUT' : 'POST';
     const url = id ? `/api/sponsors/${id}` : '/api/sponsors';
     try {
-      const res = await fetch(url, {
+      const res = await apiFetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -934,7 +934,6 @@
       closeSponsorModal();
       loaded['sponsors'] = false;
       loadSponsors();
-      loaded['sponsors'] = true;
     } catch(e) {
       alert('Error saving ad: ' + e.message);
     }
@@ -942,10 +941,14 @@
 
   async function deleteAd(id, name) {
     if (!confirm(`Delete ad for "${name}"? This also removes its impression/click history.`)) return;
-    await fetch(`/api/sponsors/${id}`, { method: 'DELETE' });
-    loaded['sponsors'] = false;
-    loadSponsors();
-    loaded['sponsors'] = true;
+    try {
+      await apiFetch(`/api/sponsors/${id}`, { method: 'DELETE' });
+      loaded['sponsors'] = false;
+      loadSponsors();
+    } catch(e) {
+      alert('Error deleting ad: ' + e.message);
+      return;
+    }
   }
 
   // ── Invites ──────────────────────────────────────────────────
@@ -1118,7 +1121,7 @@
     const body = { status: 'completed' };
     if (ref) body.ref = ref;
     try {
-      const res = await fetch(`/api/withdrawals/${id}`, {
+      const res = await apiFetch(`/api/withdrawals/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -1126,7 +1129,6 @@
       if (!res.ok) throw new Error(await res.text());
       loaded['withdrawals'] = false;
       loadWithdrawals();
-      loaded['withdrawals'] = true;
     } catch(e) {
       alert('Error approving: ' + e.message);
     }
@@ -1135,7 +1137,7 @@
   async function rejectWithdrawal(id, label) {
     if (!confirm(`Reject withdrawal for "${label}"?`)) return;
     try {
-      const res = await fetch(`/api/withdrawals/${id}`, {
+      const res = await apiFetch(`/api/withdrawals/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'rejected' })
@@ -1143,7 +1145,6 @@
       if (!res.ok) throw new Error(await res.text());
       loaded['withdrawals'] = false;
       loadWithdrawals();
-      loaded['withdrawals'] = true;
     } catch(e) {
       alert('Error rejecting: ' + e.message);
     }

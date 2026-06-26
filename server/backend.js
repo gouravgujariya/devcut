@@ -10,8 +10,17 @@ const { Resend } = require("resend");
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 const app = express();
+
+// CORS — allow landing page and any browser client to reach public endpoints
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
 // ─── Public extension API (/v1/) ──────────────────────────────────────────────
@@ -135,10 +144,9 @@ app.get("/v1/sponsor-line", requireAuth, (req, res) => {
   if (allSponsors.length === 0) return res.json(null);
 
   const todaySpendStmt = db.prepare(
-    `SELECT COALESCE(SUM(s.payout_paise), 0) AS spend
-     FROM impressions i
-     JOIN sponsors s ON s.id = i.sponsor_id
-     WHERE i.sponsor_id = ? AND i.ts > unixepoch('now', 'start of day')`
+    `SELECT COALESCE(SUM(payout_paise), 0) AS spend
+     FROM impressions
+     WHERE sponsor_id = ? AND ts > unixepoch('now', 'start of day')`
   );
 
   // Filter out sponsors that have exceeded their daily budget
@@ -176,15 +184,14 @@ app.post("/v1/impressions", requireAuth, rateLimitImpressions, (req, res) => {
   if (!parse.success) return res.status(400).json({ error: "invalid body" });
 
   const { lineId, taskType } = parse.data;
-  const sponsor = db.prepare("SELECT id FROM sponsors WHERE id = ? AND active = 1").get(lineId);
+  const sponsor = db.prepare("SELECT id, payout_paise FROM sponsors WHERE id = ? AND active = 1").get(lineId);
   if (!sponsor) return res.status(400).json({ error: "unknown_sponsor" });
 
   const ip = req.ip || req.headers["x-forwarded-for"] || null;
-  db.prepare("INSERT INTO impressions (user_id, sponsor_id, task_type, ip) VALUES (?, ?, ?, ?)")
-    .run(req.userId, lineId, taskType || null, ip);
+  db.prepare("INSERT INTO impressions (user_id, sponsor_id, task_type, ip, payout_paise) VALUES (?, ?, ?, ?, ?)")
+    .run(req.userId, lineId, taskType || null, ip, sponsor.payout_paise);
 
-  const total = db.prepare("SELECT COUNT(*) as n FROM impressions").get().n;
-  console.log(`[impression] user=${req.userId} sponsor=${lineId} type=${taskType} total=${total}`);
+  console.log(`[impression] user=${req.userId} sponsor=${lineId} type=${taskType}`);
   res.json({ ok: true });
 });
 
@@ -194,19 +201,15 @@ app.post("/v1/clicks", requireAuth, (req, res) => {
   if (!parse.success) return res.status(400).json({ error: "invalid body" });
 
   db.prepare("INSERT INTO clicks (user_id, sponsor_id) VALUES (?, ?)").run(req.userId, parse.data.lineId);
-  const total = db.prepare("SELECT COUNT(*) as n FROM clicks").get().n;
-  console.log(`[click] user=${req.userId} sponsor=${parse.data.lineId} total=${total}`);
+  console.log(`[click] user=${req.userId} sponsor=${parse.data.lineId}`);
   res.json({ ok: true });
 });
 
 // GET /v1/earnings  — server-verified lifetime earnings for the authenticated user
 app.get("/v1/earnings", requireAuth, (req, res) => {
   const row = db.prepare(
-    `SELECT COALESCE(SUM(s.payout_paise), 0) AS total_paise,
-            COUNT(i.id)                        AS impression_count
-     FROM   impressions i
-     JOIN   sponsors    s ON s.id = i.sponsor_id
-     WHERE  i.user_id = ?`
+    `SELECT COALESCE(SUM(payout_paise), 0) AS total_paise, COUNT(*) AS impression_count
+     FROM impressions WHERE user_id = ?`
   ).get(req.userId);
   res.json({ totalPaise: row.total_paise, impressionCount: row.impression_count });
 });
@@ -231,9 +234,7 @@ app.post("/v1/withdraw", requireAuth, (req, res) => {
 
   // Calculate available balance (total earned - total withdrawn)
   const earned = db.prepare(
-    `SELECT COALESCE(SUM(s.payout_paise), 0) AS total_paise
-     FROM impressions i JOIN sponsors s ON s.id = i.sponsor_id
-     WHERE i.user_id = ?`
+    "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions WHERE user_id = ?"
   ).get(req.userId).total_paise;
 
   const withdrawn = db.prepare(
@@ -355,11 +356,10 @@ app.get("/v1/teams/me", requireAuth, (req, res) => {
   const team = db.prepare("SELECT * FROM teams WHERE id = ?").get(membership.team_id);
   const leaderboard = db.prepare(
     `SELECT tm.user_id,
-            COALESCE(SUM(s.payout_paise), 0) AS total_paise,
+            COALESCE(SUM(i.payout_paise), 0) AS total_paise,
             COUNT(i.id)                        AS impression_count
      FROM   team_members tm
      LEFT JOIN impressions i ON i.user_id = tm.user_id
-     LEFT JOIN sponsors    s ON s.id = i.sponsor_id
      WHERE  tm.team_id = ?
      GROUP  BY tm.user_id
      ORDER  BY total_paise DESC`
@@ -381,8 +381,7 @@ app.get("/v1/teams/me", requireAuth, (req, res) => {
 app.get("/v1/public/stats", (req, res) => {
   const totalImpressions = db.prepare("SELECT COUNT(*) as n FROM impressions").get().n;
   const totalPaid = db.prepare(
-    `SELECT COALESCE(SUM(s.payout_paise), 0) AS total_paise
-     FROM impressions i JOIN sponsors s ON s.id = i.sponsor_id`
+    "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions"
   ).get().total_paise;
   const activeDevs = db.prepare(
     "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE ts > unixepoch() - 86400"
@@ -511,8 +510,10 @@ app.post("/v1/public/signup", async (req, res) => {
 
   if (!parse.success) return res.status(400).json({ error: "invalid_body" });
 
-  const { name, email } = parse.data;
+  const { name, email, role, github, company } = parse.data;
   const normalizedEmail = email.toLowerCase().trim();
+  // role/github/company logged for manual review; not stored in DB yet
+  console.log(`[signup] meta role=${role || "-"} github=${github || "-"} company=${company || "-"}`);
 
   // Check if already signed up
   const existing = db.prepare("SELECT code FROM beta_invites WHERE email = ?").get(normalizedEmail);
@@ -561,6 +562,85 @@ app.post("/v1/public/signup", async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /v1/public/advertiser-inquiry  — advertiser sign-up form (no auth)
+app.post("/v1/public/advertiser-inquiry", async (req, res) => {
+  const parse = z.object({
+    company:         z.string().min(1).max(120),
+    contact_name:    z.string().min(1).max(120),
+    email:           z.string().email(),
+    website:         z.string().url().optional().or(z.literal("")),
+    ad_text:         z.string().min(5).max(160),
+    destination_url: z.string().url(),
+    budget_range:    z.enum(["500-1000", "1000-5000", "5000-20000", "20000+"]),
+    slot_type:       z.enum(["build", "test", "install", "all"]),
+    product_type:    z.string().max(64).optional(),
+    notes:           z.string().max(1000).optional(),
+  }).safeParse(req.body);
+
+  if (!parse.success) return res.status(400).json({ error: "invalid_body", details: parse.error.flatten() });
+
+  const d = parse.data;
+
+  try {
+    db.prepare(`
+      INSERT INTO advertiser_inquiries
+        (company, contact_name, email, website, ad_text, destination_url, budget_range, slot_type, product_type, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(d.company, d.contact_name, d.email, d.website || null, d.ad_text, d.destination_url, d.budget_range, d.slot_type, d.product_type || null, d.notes || null);
+  } catch (e) {
+    console.error("[advertiser-inquiry] db error:", e.message);
+    return res.status(500).json({ error: "db_error" });
+  }
+
+  // Notify admin
+  if (resend) {
+    resend.emails.send({
+      from: "DevCut <techsupport@devcut.co.in>",
+      to: "er.gouravgujariya@gmail.com",
+      subject: `[DevCut] New advertiser: ${d.company} (${d.budget_range}/mo)`,
+      html: `<div style="font-family:monospace;background:#0d1117;color:#e2e8f0;padding:24px;border-radius:8px;">
+        <h2 style="color:#58a6ff;margin-bottom:16px;">New Advertiser Inquiry</h2>
+        <table style="border-collapse:collapse;width:100%;">
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Company</td><td style="color:#fff;font-weight:700;">${d.company}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Contact</td><td>${d.contact_name} &lt;${d.email}&gt;</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Website</td><td>${d.website || "—"}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Budget</td><td style="color:#00e676;font-weight:700;">₹${d.budget_range}/mo</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Slot</td><td>${d.slot_type}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Product type</td><td>${d.product_type || "—"}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Destination URL</td><td>${d.destination_url}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;vertical-align:top;">Ad text</td><td style="color:#00e676;font-style:italic;">"${d.ad_text}"</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;vertical-align:top;">Notes</td><td>${d.notes || "—"}</td></tr>
+        </table>
+        <div style="margin-top:20px;padding:12px;background:#161b22;border-radius:6px;color:#8b949e;font-size:12px;">Add to admin dashboard: https://waitwage-production.up.railway.app/admin</div>
+      </div>`,
+    }).catch(err => console.error("[advertiser-inquiry] resend error:", err.message));
+
+    // Confirmation to advertiser
+    resend.emails.send({
+      from: "DevCut <techsupport@devcut.co.in>",
+      to: d.email,
+      subject: `We got your DevCut inquiry, ${d.contact_name.split(' ')[0]}!`,
+      html: `<div style="font-family:-apple-system,sans-serif;background:#0d1117;color:#e2e8f0;padding:32px;border-radius:12px;max-width:520px;">
+        <div style="font-size:20px;font-weight:900;margin-bottom:4px;"><span style="color:#58a6ff;">Dev</span>Cut</div>
+        <div style="color:#8b949e;font-size:13px;margin-bottom:24px;">Advertising for developers</div>
+        <p style="margin-bottom:16px;">Hi ${d.contact_name.split(' ')[0]},</p>
+        <p style="color:#8b949e;line-height:1.6;margin-bottom:20px;">
+          We've received your inquiry for <strong style="color:#fff;">${d.company}</strong>.
+          We'll review your ad copy and budget and get back to you within 24 hours with next steps.
+        </p>
+        <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:24px;">
+          <div style="font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;">Your ad preview</div>
+          <div style="color:#58a6ff;font-size:13px;font-family:monospace;">📣 ${d.ad_text}</div>
+        </div>
+        <p style="color:#8b949e;font-size:13px;">Questions? Reply to this email or reach us at <a href="mailto:techsupport@devcut.co.in" style="color:#58a6ff;">techsupport@devcut.co.in</a></p>
+      </div>`,
+    }).catch(err => console.error("[advertiser-inquiry] confirmation email error:", err.message));
+  }
+
+  console.log(`[advertiser-inquiry] company=${d.company} email=${d.email} budget=${d.budget_range}`);
+  res.json({ ok: true });
+});
+
 // ─── Admin API ────────────────────────────────────────────────────────────────
 
 app.use("/api", adminAuth);
@@ -572,10 +652,9 @@ app.get("/api/sponsors", (req, res) => {
   const clickCounts = db.prepare("SELECT sponsor_id, COUNT(*) as n FROM clicks GROUP BY sponsor_id")
     .all().reduce((acc, r) => { acc[r.sponsor_id] = r.n; return acc; }, {});
   const dailySpendStmt = db.prepare(
-    `SELECT COALESCE(SUM(s.payout_paise), 0) AS spend
-     FROM impressions i
-     JOIN sponsors s ON s.id = i.sponsor_id
-     WHERE i.sponsor_id = ? AND i.ts > unixepoch('now', 'start of day')`
+    `SELECT COALESCE(SUM(payout_paise), 0) AS spend
+     FROM impressions
+     WHERE sponsor_id = ? AND ts > unixepoch('now', 'start of day')`
   );
 
   res.json(sponsors.map(s => ({
@@ -643,8 +722,7 @@ app.get("/api/overview", (req, res) => {
   const totalUsers = db.prepare("SELECT COUNT(*) as n FROM users").get().n;
   const pendingWithdrawals = db.prepare("SELECT COUNT(*) as n, COALESCE(SUM(amount_paise),0) as total FROM withdrawals WHERE status='pending'").get();
   const totalPaid = db.prepare(
-    `SELECT COALESCE(SUM(s.payout_paise), 0) AS paise
-     FROM impressions i JOIN sponsors s ON s.id = i.sponsor_id`
+    "SELECT COALESCE(SUM(payout_paise), 0) AS paise FROM impressions"
   ).get().paise;
   const taskTypeBreakdown = db.prepare(
     "SELECT task_type, COUNT(*) as n FROM impressions WHERE task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC"
@@ -716,14 +794,20 @@ app.get("/api/teams", (req, res) => {
 app.get("/api/users", (req, res) => {
   const users = db.prepare(
     `SELECT u.*,
-            COALESCE(SUM(s.payout_paise), 0) AS total_earned_paise,
+            COALESCE(SUM(i.payout_paise), 0) AS total_earned_paise,
             COUNT(i.id) AS impression_count
      FROM users u
      LEFT JOIN impressions i ON i.user_id = u.id
-     LEFT JOIN sponsors s ON s.id = i.sponsor_id
      GROUP BY u.id ORDER BY total_earned_paise DESC`
   ).all();
   res.json(users);
+});
+
+app.get("/api/advertiser-inquiries", (req, res) => {
+  const rows = db.prepare(
+    "SELECT * FROM advertiser_inquiries ORDER BY created_at DESC"
+  ).all();
+  res.json(rows);
 });
 
 app.get("/admin", (req, res) => {
