@@ -809,18 +809,16 @@
         <h2>I'm an Advertiser</h2>
         <p class="path-sub">Reach developers at the exact moment they are attentive and idle — not scrolling a feed, not watching a video.</p>
         <ul class="path-perks">
-          <li>Auction-based bidding for slots — pay only what you win</li>
-          <li>Target by language, framework, task type (build / test / install)</li>
-          <li>Format: one line of text + one logo + clickable link — clean, minimal</li>
-          <li>All ad categories accepted — dev tools, crypto, gambling, political & more</li>
-          <li>Age-gated delivery: 18+ audiences unlock all categories automatically</li>
+          <li>Target by task type — build, test, install, or AI tool sessions</li>
+          <li>Verified developer audience — no bots, no proxy traffic</li>
+          <li>One line of text + clickable link — minimal, zero-scroll format</li>
           <li>Real-time impression and click reporting</li>
-          <li>CPM and CPC pricing options available</li>
+          <li>INR pricing, UPI billing — no forex, no Stripe</li>
           <li>Minimum spend as low as ₹500 to start testing</li>
         </ul>
-        <a class="path-cta-adv" href="#advertise">
+        <a class="path-cta-adv" href="advertisers.html">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 2L11 13"/><path d="M22 2L15 22 11 13 2 9l20-7z"/></svg>
-          Bid for a Slot →
+          See Advertiser Plans →
         </a>
       </div>
     </div>
@@ -1278,7 +1276,7 @@ setInterval(() => {
     try {
       const res = await fetch(`${BACKEND}/v1/public/stats`);
       const data = await res.json();
-      const used = data.totalDevs || 0;
+      const used = data.totalSignups || 0;
       const remaining = Math.max(0, TOTAL_SPOTS - used);
       countEl.textContent = remaining + ' of ' + TOTAL_SPOTS;
     } catch { countEl.textContent = TOTAL_SPOTS + ' of ' + TOTAL_SPOTS; }

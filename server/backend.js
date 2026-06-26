@@ -8,6 +8,7 @@ const { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit } = requir
 const { Resend } = require("resend");
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
+if (!resend) console.warn("[startup] RESEND_API_KEY not set — all emails disabled");
 
 const app = express();
 
@@ -387,6 +388,7 @@ app.get("/v1/public/stats", (req, res) => {
     "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE ts > unixepoch() - 86400"
   ).get().n;
   const totalDevs = db.prepare("SELECT COUNT(*) as n FROM users WHERE status = 'active'").get().n;
+  const totalSignups = db.prepare("SELECT COUNT(*) as n FROM beta_invites").get().n;
   const topTaskTypes = db.prepare(
     `SELECT task_type, COUNT(*) as n FROM impressions
      WHERE task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC LIMIT 5`
@@ -397,6 +399,7 @@ app.get("/v1/public/stats", (req, res) => {
     totalPaidRupees: (totalPaid / 100).toFixed(2),
     activeDevsToday: activeDevs,
     totalDevs,
+    totalSignups,
     topTaskTypes,
     lastUpdated: new Date().toISOString(),
   });
