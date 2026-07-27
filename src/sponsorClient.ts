@@ -63,6 +63,19 @@ export class SponsorClient {
     this.onAuthExpired = fn;
   }
 
+  /**
+   * Single-flight token refresh — the only entry point that should ever trigger one.
+   * Refresh tokens rotate on use, so two concurrent refreshes race: the loser sends
+   * an already-revoked token and gets a false "session expired". Callers (startup
+   * check, mid-request 401 handling) must all funnel through here, not call
+   * refreshAccessToken() directly, so they share the same in-flight attempt.
+   */
+  async refreshIfNeeded(): Promise<boolean> {
+    if (!this.onAuthExpired) return false;
+    this.refreshInFlight ??= this.onAuthExpired().finally(() => (this.refreshInFlight = undefined));
+    return this.refreshInFlight;
+  }
+
   async fetchCurrentLine(taskType?: string): Promise<SponsorLine | undefined> {
     const qs = taskType ? `?taskType=${encodeURIComponent(taskType)}` : "";
     try {
@@ -226,12 +239,8 @@ export class SponsorClient {
     } catch (err: any) {
       // Access tokens live 1 day but VS Code windows live longer — refresh once and retry.
       const authFailed = err?.message === "token_expired" || err?.message === "invalid_token";
-      if (authFailed && !opts?.skipAuth && this.onAuthExpired) {
-        // Single-flight: refresh tokens rotate on use, so concurrent refreshes would revoke each other
-        this.refreshInFlight ??= this.onAuthExpired().finally(() => (this.refreshInFlight = undefined));
-        if (await this.refreshInFlight) {
-          return this.requestOnce(method, path, body, opts);
-        }
+      if (authFailed && !opts?.skipAuth && (await this.refreshIfNeeded())) {
+        return this.requestOnce(method, path, body, opts);
       }
       throw err;
     }

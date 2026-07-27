@@ -428,15 +428,12 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   // Silently refresh the 1-day access token on startup if it has expired.
-  // Uses the long-lived refresh token (rotated on each use).
+  // Goes through refreshIfNeeded() (not refreshAccessToken() directly) so this
+  // shares the single-flight guard with any refresh a concurrent request triggers —
+  // otherwise both would race the same rotating refresh token and one would lose.
   if (authStore.isAccessTokenExpired()) {
-    authStore.getRefreshToken().then(async (rt) => {
-      if (!rt) return;
-      const result = await sponsorClient.refreshAccessToken(rt);
-      if (result?.accessToken) {
-        await authStore.setAccessToken(result.accessToken);
-        await authStore.setRefreshToken(result.refreshToken);
-      } else {
+    sponsorClient.refreshIfNeeded().then(async (ok) => {
+      if (!ok) {
         const action = await vscode.window.showWarningMessage(
           "DevCut: Session expired. Re-enter your invite code to continue earning.",
           "Re-activate"
