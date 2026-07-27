@@ -1,16 +1,23 @@
 const express = require("express");
 const path = require("path");
-const { randomUUID } = require("crypto");
+const { randomUUID, randomInt } = require("crypto");
 const { z } = require("zod");
 const db = require("./db");
 const { signAccessToken, getPublicJwk } = require("./auth");
-const { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit } = require("./middleware");
+const { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit, authRateLimit } = require("./middleware");
 const { Resend } = require("resend");
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 if (!resend) console.warn("[startup] RESEND_API_KEY not set — all emails disabled");
 
+// Escape user-supplied strings before interpolating into email/admin HTML
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 const app = express();
+// Behind Railway's proxy — makes req.ip the real client IP so rate limits key correctly
+app.set("trust proxy", 1);
 
 // CORS — allow landing page and any browser client to reach public endpoints
 app.use((req, res, next) => {
@@ -36,7 +43,7 @@ app.get("/v1/jwks", (req, res) => {
 });
 
 // POST /v1/register  — exchange invite code for access + refresh tokens
-app.post("/v1/register", (req, res) => {
+app.post("/v1/register", authRateLimit, (req, res) => {
   const parse = z.object({ inviteCode: z.string().min(1) }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "inviteCode required" });
 
@@ -66,7 +73,7 @@ app.post("/v1/register", (req, res) => {
 });
 
 // POST /v1/login  — sign in again using an already-used invite code
-app.post("/v1/login", (req, res) => {
+app.post("/v1/login", authRateLimit, (req, res) => {
   const parse = z.object({ inviteCode: z.string().min(1) }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "inviteCode required" });
 
@@ -97,7 +104,7 @@ app.get("/v1/me", requireAuth, (req, res) => {
 
 // POST /v1/token/refresh  — exchange refresh token for new access + refresh tokens
 // No Authorization header needed — the refresh token IS the credential here.
-app.post("/v1/token/refresh", (req, res) => {
+app.post("/v1/token/refresh", authRateLimit, (req, res) => {
   const parse = z.object({ refreshToken: z.string().uuid() }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "refreshToken required" });
 
@@ -166,7 +173,8 @@ app.get("/v1/sponsor-line", requireAuth, (req, res) => {
   const topTier = eligible.filter(s => s.bid_paise === maxBid);
   const sponsor = topTier[Math.floor(Math.random() * topTier.length)];
 
-  const payoutPaise = Math.floor(sponsor.bid_paise * 0.6);
+  // Serve the stored payout so what the user sees matches what /v1/impressions credits
+  const payoutPaise = sponsor.payout_paise;
 
   console.log(`[sponsor-line] served "${sponsor.id}" (bid=${sponsor.bid_paise}p payout=${payoutPaise}p) to ${req.userId} task_type=${taskType}`);
   res.json({
@@ -208,13 +216,27 @@ app.post("/v1/clicks", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /v1/earnings  — server-verified lifetime earnings for the authenticated user
+// GET /v1/earnings  — server-verified earnings + withdrawable balance
 app.get("/v1/earnings", requireAuth, (req, res) => {
   const row = db.prepare(
     `SELECT COALESCE(SUM(payout_paise), 0) AS total_paise, COUNT(*) AS impression_count
      FROM impressions WHERE user_id = ?`
   ).get(req.userId);
-  res.json({ totalPaise: row.total_paise, impressionCount: row.impression_count });
+  const withdrawn = db.prepare(
+    `SELECT COALESCE(SUM(amount_paise), 0) AS total_paise
+     FROM withdrawals WHERE user_id = ? AND status IN ('pending', 'completed')`
+  ).get(req.userId).total_paise;
+  const pending = db.prepare(
+    "SELECT 1 FROM withdrawals WHERE user_id = ? AND status = 'pending'"
+  ).get(req.userId);
+  res.json({
+    totalPaise: row.total_paise,
+    impressionCount: row.impression_count,
+    withdrawnPaise: withdrawn,
+    availablePaise: row.total_paise - withdrawn,
+    pendingWithdrawal: !!pending,
+    minWithdrawPaise: MIN_WITHDRAWAL_PAISE,
+  });
 });
 
 // GET /v1/stats  — quick sanity check (unauthenticated, aggregate only)
@@ -289,7 +311,7 @@ app.get("/v1/withdraw/history", requireAuth, (req, res) => {
 
 function generateTeamCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  return Array.from({ length: 6 }, () => chars[randomInt(chars.length)]).join("");
 }
 
 // POST /v1/teams  — create a new team pool
@@ -409,7 +431,8 @@ app.get("/v1/public/stats", (req, res) => {
 
 // ─── Public Signup → generate invite + send email ────────────────────────────
 
-function buildInviteEmail(name, code) {
+function buildInviteEmail(rawName, code) {
+  const name = rawName ? escapeHtml(rawName) : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -537,10 +560,8 @@ app.post("/v1/public/signup", async (req, res) => {
     return res.json({ ok: true, resent: true, email_sent });
   }
 
-  // Generate new invite code
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const seg = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-  const code = `DCUT-${seg()}-${seg()}-${seg().slice(0, 2)}`;
+  // Generate new invite code (crypto-secure: the code doubles as the login credential)
+  const code = generateInviteCode();
 
   try {
     db.prepare("INSERT INTO beta_invites (code, email) VALUES (?, ?)").run(code, normalizedEmail);
@@ -590,6 +611,8 @@ app.post("/v1/public/advertiser-inquiry", async (req, res) => {
   if (!parse.success) return res.status(400).json({ error: "invalid_body", details: parse.error.flatten() });
 
   const d = parse.data;
+  // HTML-escaped copy for interpolation into the notification emails below
+  const h = Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v == null ? v : escapeHtml(v)]));
 
   try {
     db.prepare(`
@@ -611,15 +634,15 @@ app.post("/v1/public/advertiser-inquiry", async (req, res) => {
       html: `<div style="font-family:monospace;background:#0d1117;color:#e2e8f0;padding:24px;border-radius:8px;">
         <h2 style="color:#58a6ff;margin-bottom:16px;">New Advertiser Inquiry</h2>
         <table style="border-collapse:collapse;width:100%;">
-          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Company</td><td style="color:#fff;font-weight:700;">${d.company}</td></tr>
-          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Contact</td><td>${d.contact_name} &lt;${d.email}&gt;</td></tr>
-          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Website</td><td>${d.website || "—"}</td></tr>
-          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Budget</td><td style="color:#00e676;font-weight:700;">₹${d.budget_range}/mo</td></tr>
-          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Slot</td><td>${d.slot_type}</td></tr>
-          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Product type</td><td>${d.product_type || "—"}</td></tr>
-          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Destination URL</td><td>${d.destination_url}</td></tr>
-          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;vertical-align:top;">Ad text</td><td style="color:#00e676;font-style:italic;">"${d.ad_text}"</td></tr>
-          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;vertical-align:top;">Notes</td><td>${d.notes || "—"}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Company</td><td style="color:#fff;font-weight:700;">${h.company}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Contact</td><td>${h.contact_name} &lt;${h.email}&gt;</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Website</td><td>${h.website || "—"}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Budget</td><td style="color:#00e676;font-weight:700;">₹${h.budget_range}/mo</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Slot</td><td>${h.slot_type}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Product type</td><td>${h.product_type || "—"}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;">Destination URL</td><td>${h.destination_url}</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;vertical-align:top;">Ad text</td><td style="color:#00e676;font-style:italic;">"${h.ad_text}"</td></tr>
+          <tr><td style="color:#8b949e;padding:6px 12px 6px 0;vertical-align:top;">Notes</td><td>${h.notes || "—"}</td></tr>
         </table>
         <div style="margin-top:20px;padding:12px;background:#161b22;border-radius:6px;color:#8b949e;font-size:12px;">Add to admin dashboard: https://waitwage-production.up.railway.app/admin</div>
       </div>`,
@@ -633,14 +656,14 @@ app.post("/v1/public/advertiser-inquiry", async (req, res) => {
       html: `<div style="font-family:-apple-system,sans-serif;background:#0d1117;color:#e2e8f0;padding:32px;border-radius:12px;max-width:520px;">
         <div style="font-size:20px;font-weight:900;margin-bottom:4px;"><span style="color:#58a6ff;">Dev</span>Cut</div>
         <div style="color:#8b949e;font-size:13px;margin-bottom:24px;">Advertising for developers</div>
-        <p style="margin-bottom:16px;">Hi ${d.contact_name.split(' ')[0]},</p>
+        <p style="margin-bottom:16px;">Hi ${h.contact_name.split(' ')[0]},</p>
         <p style="color:#8b949e;line-height:1.6;margin-bottom:20px;">
-          We've received your inquiry for <strong style="color:#fff;">${d.company}</strong>.
+          We've received your inquiry for <strong style="color:#fff;">${h.company}</strong>.
           We'll review your ad copy and budget and get back to you within 24 hours with next steps.
         </p>
         <div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin-bottom:24px;">
           <div style="font-size:11px;color:#8b949e;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;">Your ad preview</div>
-          <div style="color:#58a6ff;font-size:13px;font-family:monospace;">📣 ${d.ad_text}</div>
+          <div style="color:#58a6ff;font-size:13px;font-family:monospace;">📣 ${h.ad_text}</div>
         </div>
         <p style="color:#8b949e;font-size:13px;">Questions? Reply to this email or reach us at <a href="mailto:techsupport@devcut.co.in" style="color:#58a6ff;">techsupport@devcut.co.in</a></p>
       </div>`,
@@ -826,7 +849,7 @@ app.get("/admin", (req, res) => {
 
 function generateInviteCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const seg = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  const seg = () => Array.from({ length: 4 }, () => chars[randomInt(chars.length)]).join("");
   return `DCUT-${seg()}-${seg()}-${seg().slice(0, 2)}`;
 }
 

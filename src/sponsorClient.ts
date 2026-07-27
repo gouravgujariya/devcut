@@ -10,6 +10,26 @@ export interface SponsorLine {
   payoutPaise?: number;
 }
 
+export interface EarningsSummary {
+  totalPaise: number;
+  impressionCount: number;
+  // Fields below exist on newer backends only — treat as optional
+  withdrawnPaise?: number;
+  availablePaise?: number;
+  pendingWithdrawal?: boolean;
+  minWithdrawPaise?: number;
+}
+
+export interface WithdrawalRecord {
+  id: number;
+  amount_paise: number;
+  upi_id: string;
+  status: string;
+  ref?: string | null;
+  created_at: number;
+  resolved_at?: number | null;
+}
+
 export interface TeamInfo {
   team: { id: string; name: string; code: string; ownerId: string };
   leaderboard: Array<{ user_id: string; total_paise: number; impression_count: number }>;
@@ -23,6 +43,8 @@ export interface TeamInfo {
  */
 export class SponsorClient {
   private token: (() => Promise<string | undefined>) | undefined;
+  private onAuthExpired?: () => Promise<boolean>;
+  private refreshInFlight?: Promise<boolean>;
 
   constructor(
     private backendUrl: string,
@@ -36,6 +58,11 @@ export class SponsorClient {
     this.token = fn;
   }
 
+  /** Called when the access token is rejected mid-session. Should refresh + store new tokens; returns true on success. */
+  setAuthRefresher(fn: () => Promise<boolean>): void {
+    this.onAuthExpired = fn;
+  }
+
   async fetchCurrentLine(taskType?: string): Promise<SponsorLine | undefined> {
     const qs = taskType ? `?taskType=${encodeURIComponent(taskType)}` : "";
     try {
@@ -47,11 +74,13 @@ export class SponsorClient {
     }
   }
 
-  async recordImpression(lineId: string, taskType?: string): Promise<void> {
+  /** Returns true only if the server accepted (and will pay for) the impression. */
+  async recordImpression(lineId: string, taskType?: string): Promise<boolean> {
     try {
-      await this.request("POST", "/v1/impressions", { lineId, taskType });
+      const data = await this.request("POST", "/v1/impressions", { lineId, taskType });
+      return !!data;
     } catch {
-      // Best-effort fire-and-forget; backend will reconcile on next sync.
+      return false; // rejected (rate-limited) or unreachable — don't credit locally
     }
   }
 
@@ -63,11 +92,11 @@ export class SponsorClient {
     }
   }
 
-  async fetchEarnings(): Promise<{ totalPaise: number; impressionCount: number } | undefined> {
+  async fetchEarnings(): Promise<EarningsSummary | undefined> {
     try {
       const data = await this.request("GET", "/v1/earnings");
       if (!data) return undefined;
-      return JSON.parse(data) as { totalPaise: number; impressionCount: number };
+      return JSON.parse(data) as EarningsSummary;
     } catch {
       return undefined;
     }
@@ -133,7 +162,7 @@ export class SponsorClient {
     }
   }
 
-  async fetchWithdrawalHistory(): Promise<Array<{ id: number; amount_paise: number; upi_id: string; status: string; created_at: number }> | undefined> {
+  async fetchWithdrawalHistory(): Promise<WithdrawalRecord[] | undefined> {
     try {
       const data = await this.request("GET", "/v1/withdraw/history");
       if (!data) return undefined;
@@ -187,6 +216,28 @@ export class SponsorClient {
   // ── HTTP core ────────────────────────────────────────────────────────────
 
   private async request(
+    method: "GET" | "POST" | "PUT" | "DELETE",
+    path: string,
+    body?: Record<string, unknown>,
+    opts?: { skipAuth?: boolean }
+  ): Promise<string | undefined> {
+    try {
+      return await this.requestOnce(method, path, body, opts);
+    } catch (err: any) {
+      // Access tokens live 1 day but VS Code windows live longer — refresh once and retry.
+      const authFailed = err?.message === "token_expired" || err?.message === "invalid_token";
+      if (authFailed && !opts?.skipAuth && this.onAuthExpired) {
+        // Single-flight: refresh tokens rotate on use, so concurrent refreshes would revoke each other
+        this.refreshInFlight ??= this.onAuthExpired().finally(() => (this.refreshInFlight = undefined));
+        if (await this.refreshInFlight) {
+          return this.requestOnce(method, path, body, opts);
+        }
+      }
+      throw err;
+    }
+  }
+
+  private async requestOnce(
     method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body?: Record<string, unknown>,

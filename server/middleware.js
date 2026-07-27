@@ -39,17 +39,18 @@ function adminAuth(req, res, next) {
   next();
 }
 
-// In-process per-user rate limit (swap for Redis at 1k+ users)
-const impressionCounts = new Map();
+// DB-backed per-user impression limits — survives restarts, unlike an in-memory map.
+// Floor of 25s between impressions (client rotates every 30s; scripted spam gets 429)
+// and 500/day hard cap.
 function rateLimitImpressions(req, res, next) {
-  const userId = req.userId;
-  const now = Date.now();
-  const DAY_MS = 86_400_000;
-  let rec = impressionCounts.get(userId);
-  if (!rec || now > rec.resetAt) rec = { count: 0, resetAt: now + DAY_MS };
-  if (rec.count >= 500) return res.status(429).json({ error: "rate_limit_exceeded" });
-  rec.count++;
-  impressionCounts.set(userId, rec);
+  const row = getDb().prepare(
+    `SELECT MAX(ts) AS last,
+            COALESCE(SUM(ts > unixepoch('now', 'start of day')), 0) AS today
+     FROM impressions WHERE user_id = ?`
+  ).get(req.userId);
+  const now = Math.floor(Date.now() / 1000);
+  if (row.last && now - row.last < 25) return res.status(429).json({ error: "too_fast" });
+  if (row.today >= 500) return res.status(429).json({ error: "rate_limit_exceeded" });
   next();
 }
 
@@ -61,4 +62,13 @@ const globalRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit };
+// Tighter limit for credential endpoints (register/login/refresh) — slows
+// invite-code brute force to uselessness.
+const authRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit, authRateLimit };

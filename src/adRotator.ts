@@ -59,8 +59,10 @@ export class AdRotator {
       this.bar.text = `$(megaphone) ${line.text}`;
       this.bar.tooltip = `Sponsored — click to learn more. ${line.advertiser ?? ""}`;
       this.bar.show();
-      this.store.recordSessionImpression(line.payoutPaise ?? 0);
-      this.client.recordImpression(line.id, this.taskType); // fire-and-forget
+      // Only credit the local tally when the server accepts the impression,
+      // so "Earned ₹X this build" never promises money the server won't pay.
+      const accepted = await this.client.recordImpression(line.id, this.taskType);
+      if (accepted) this.store.recordSessionImpression(line.payoutPaise ?? 0);
       const rupees = (this.store.getSessionEarningsPaise() / 100).toFixed(2);
       this.sessionBar.text = `$(coin) ₹${rupees} this session`;
       this.sessionBar.show();

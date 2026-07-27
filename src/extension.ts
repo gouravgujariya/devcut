@@ -3,6 +3,7 @@ import { SponsorClient } from "./sponsorClient";
 import { EarningsStore } from "./earningsStore";
 import { AuthStore } from "./authStore";
 import { AdRotator } from "./adRotator";
+import { showEarningsPanel } from "./panel";
 
 let adBar: vscode.StatusBarItem;
 let sessionBar: vscode.StatusBarItem;
@@ -73,6 +74,18 @@ export function activate(context: vscode.ExtensionContext) {
     () => authStore.getToken()
   );
 
+  // Mid-session token refresh: access tokens last 1 day, editor windows last longer.
+  // Without this, earnings silently stop after 24h until the next reload.
+  sponsorClient.setAuthRefresher(async () => {
+    const rt = await authStore.getRefreshToken();
+    if (!rt) return false;
+    const result = await sponsorClient.refreshAccessToken(rt);
+    if (!result?.accessToken) return false;
+    await authStore.setAccessToken(result.accessToken);
+    await authStore.setRefreshToken(result.refreshToken);
+    return true;
+  });
+
   // ── Status bar items ──────────────────────────────────────────────────────
 
   adBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -127,22 +140,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("devcut.showEarnings", () => {
-      const localRupees = earningsStore.getTotalEarningsPaise() / 100;
-      const impressions = earningsStore.getImpressionCount();
-      const serverPaise = earningsStore.getServerBalance();
-      if (serverPaise !== undefined) {
-        const serverRupees = (serverPaise / 100).toFixed(2);
-        const fetchedAt = earningsStore.getServerBalanceFetchedAt();
-        const minsAgo = Math.round((Date.now() - fetchedAt) / 60000);
-        vscode.window.showInformationMessage(
-          `DevCut — Server-verified: ₹${serverRupees} (synced ${minsAgo}m ago). ` +
-          `Local tally: ₹${localRupees.toFixed(2)} across ${impressions} impressions.`
-        );
-      } else {
-        vscode.window.showInformationMessage(
-          `DevCut — Lifetime earnings: ₹${localRupees.toFixed(2)} across ${impressions} impressions.`
-        );
-      }
+      showEarningsPanel(context, sponsorClient, earningsStore);
     })
   );
 
