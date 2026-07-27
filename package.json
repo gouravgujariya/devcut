@@ -1,16 +1,23 @@
 {
-  "name": "devcut",
-  "displayName": "DevCut — Get Paid for Waiting",
+  "name": "devcut-for-vscode",
+  "displayName": "DevCut: Earn While You Build",
   "description": "Shows a sponsored line in your status bar while you wait on builds, installs, and tests. You get a share of the revenue.",
-  "version": "0.1.1",
-  "publisher": "gouravgujariya",
+  "version": "0.1.3",
+  "publisher": "devcut",
   "icon": "logo.png",
-  "repository": { "type": "git", "url": "https://github.com/gouravgujariya/waitwage" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gouravgujariya/waitwage"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -20,7 +27,7 @@
       },
       {
         "command": "devcut.showEarnings",
-        "title": "DevCut: Show My Earnings"
+        "title": "DevCut: My Earnings Dashboard"
       },
       {
         "command": "devcut.syncEarnings",

@@ -26,6 +26,7 @@ competition.ini
 howtouse.md
 INDIA-STRATEGY.md
 SCALE-PLAN.md
+issues.md
 
 # Images (not used in extension UI — except logo.png)
 !logo.png
@@ -34,8 +35,8 @@ SCALE-PLAN.md
 *.jpeg
 gen_logo.py
 
-# Build artifacts
-*.js.map
+# Build artifacts — needs **/ because vsce globs don't cross directory boundaries
+**/*.js.map
 
 # Misc
 node_modules/
