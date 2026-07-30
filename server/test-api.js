@@ -151,9 +151,20 @@ async function main() {
   assert.strictEqual(stats.paidLast7dRupees, "0.85");
   assert.strictEqual(stats.avgPerActiveDevRupees, "0.85");
   assert.strictEqual(stats.dailyImpressions.length, 1);
+  // totalPaidRupees is real withdrawal payouts, not accrued earnings — 0 until a
+  // withdrawal is actually completed, even though 0.85 has been earned above.
+  assert.strictEqual(stats.totalPaidRupees, "0.00", "totalPaidRupees must not count unwithdrawn earnings");
   const raw = JSON.stringify(stats);
   assert.ok(!/email|user_id|@/i.test(raw), "public stats leaked PII: " + raw);
   assert.ok(!raw.includes(userId), "public stats leaked a user id");
+
+  // ── totalPaidRupees tracks completed withdrawals, not accrued earnings ─────
+  db.prepare("INSERT INTO withdrawals (user_id, amount_paise, upi_id, status) VALUES (?, ?, ?, 'completed')")
+    .run(userId, 5000, "test@upi");
+  const statsAfterPayout = await (await fetch(base + "/v1/public/stats")).json();
+  assert.strictEqual(statsAfterPayout.totalPaidRupees, "50.00", "public stats must reflect completed withdrawals");
+  const ovAfterPayout = (await api("GET", "/api/overview")).body;
+  assert.strictEqual(ovAfterPayout.totalPaidRupees, "50.00", "admin overview must reflect completed withdrawals");
 
   // ── mandatory company/university name ─────────────────────────────────────
   assert.strictEqual(
