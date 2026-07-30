@@ -509,6 +509,7 @@
     <a href="#install" class="hide-mobile">Install</a>
     <a href="advertisers.html" class="hide-mobile">Advertise</a>
     <a href="#india" class="hide-mobile">India</a>
+    <a href="login.html">Dashboard</a>
     <a class="nav-cta" href="#early-access">Early Access</a>
   </div>
 </nav>
@@ -995,6 +996,51 @@
   </div>
 </section>
 
+<!-- ── LIVE TRANSPARENCY (fed by /v1/public/stats, hidden unless it loads) ── -->
+<section id="transparency" style="display:none;background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
+  <div class="container">
+    <div class="section-label">Live numbers</div>
+    <h2 class="section-title">Our books, in public.</h2>
+    <p class="section-sub">Straight from the production database, aggregate only, no cherry-picking. Refresh the page and watch it move.</p>
+
+    <div class="stat-grid" style="margin-top:2.5rem;">
+      <div class="stat">
+        <div class="stat-value" style="color:var(--green);" id="tsImpressions">—</div>
+        <div class="stat-label">Ad impressions served</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" style="color:var(--blue);" id="tsPaid">—</div>
+        <div class="stat-label">Paid out to developers</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="tsActive">—</div>
+        <div class="stat-label">Developers earning today</div>
+      </div>
+      <div class="stat" id="tsClicksCard" style="display:none;">
+        <div class="stat-value" style="color:var(--purple);" id="tsClicks">—</div>
+        <div class="stat-label">Sponsor clicks</div>
+      </div>
+    </div>
+
+    <div class="split-2" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.2rem;margin-top:1.2rem;">
+      <div class="card" id="tsTrendCard" style="display:none;">
+        <h2>Impressions, last 14 days</h2>
+        <div class="chart" id="tsChart"></div>
+        <div class="chart-axis"><span id="tsFrom">—</span><span id="tsTo">—</span></div>
+      </div>
+      <div class="card" id="tsTasksCard" style="display:none;margin-top:0;">
+        <h2>Where the ads actually show</h2>
+        <div id="tsTasks"></div>
+      </div>
+    </div>
+
+    <p class="card-note" style="margin-top:1.2rem;">
+      Aggregate figures only — no developer is identifiable here.
+      Already earning? <a href="dashboard.html" style="color:var(--blue);">See your own numbers →</a>
+    </p>
+  </div>
+</section>
+
 <!-- ── EARLY ACCESS ── -->
 <section id="early-access" style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
   <div class="container" style="max-width:640px;text-align:center;">
@@ -1045,7 +1091,7 @@
       </div>
 
       <div class="field-wrap">
-        <input class="form-input" type="text" id="f-company" placeholder="Company / project (optional)" autocomplete="organization" />
+        <input class="form-input" type="text" id="f-company" placeholder="Company or university name" autocomplete="organization" required />
       </div>
 
       <button class="btn-primary" type="submit" id="submitBtn" style="width:100%;font-size:1.05rem;padding:.9rem;">
@@ -1272,6 +1318,77 @@ setInterval(() => {
   setTimeout(() => { earningsBadge.style.transform = 'scale(1)'; }, 200);
 }, 4500);
 
+/* ── LIVE TRANSPARENCY PANEL → /v1/public/stats (public, aggregate only) ── */
+(function () {
+  const BACKEND = 'https://waitwage-production.up.railway.app';
+  const num = n => Number(n || 0).toLocaleString('en-IN');
+  const set = (id, v) => { document.getElementById(id).textContent = v; };
+  const show = id => { document.getElementById(id).style.display = ''; };
+  const dayFmt = d => {
+    const t = Date.parse(String(d) + 'T00:00:00Z');
+    return isNaN(t) ? String(d) : new Date(t).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  };
+
+  (async function () {
+    let d;
+    try {
+      const res = await fetch(`${BACKEND}/v1/public/stats`, {
+        cache: 'no-store', signal: AbortSignal.timeout(6000),
+      });
+      if (!res.ok) return;                       // stay hidden
+      d = await res.json();
+    } catch { return; }                          // stay hidden — never show a broken panel
+
+    // ponytail: no impressions yet means every tile reads zero — that is worse than showing nothing.
+    if (!d || !Number(d.totalImpressions)) return;
+
+    set('tsImpressions', num(d.totalImpressions));
+    set('tsPaid', '₹' + (d.totalPaidRupees != null ? d.totalPaidRupees : '0.00'));
+    set('tsActive', num(d.activeDevsToday));
+    if (d.totalClicks != null) { set('tsClicks', num(d.totalClicks)); show('tsClicksCard'); }
+
+    // 14-day impression trend (added by the backend contract; skip the card if absent)
+    const trend = Array.isArray(d.dailyImpressions) ? d.dailyImpressions : [];
+    if (trend.length) {
+      const host = document.getElementById('tsChart');
+      const max = Math.max.apply(null, trend.map(r => Number(r.n) || 0).concat([1]));
+      trend.forEach(r => {
+        const col = document.createElement('div'); col.className = 'chart-col';
+        const bar = document.createElement('div'); bar.className = 'chart-bar blue';
+        bar.style.height = Math.max(2, Math.round((Number(r.n) || 0) / max * 100)) + '%';
+        bar.title = dayFmt(r.day) + ' · ' + num(r.n) + ' impressions';
+        col.appendChild(bar); host.appendChild(col);
+      });
+      set('tsFrom', dayFmt(trend[0].day));
+      set('tsTo', dayFmt(trend[trend.length - 1].day));
+      show('tsTrendCard');
+    }
+
+    // top task types
+    const tasks = Array.isArray(d.topTaskTypes) ? d.topTaskTypes : [];
+    if (tasks.length) {
+      const host = document.getElementById('tsTasks');
+      const max = Math.max.apply(null, tasks.map(r => Number(r.n) || 0).concat([1]));
+      tasks.forEach(r => {
+        const row = document.createElement('div'); row.className = 'bar-row';
+        const label = document.createElement('div'); label.className = 'bar-label';
+        label.textContent = String(r.task_type == null || r.task_type === '' ? 'other' : r.task_type);
+        const track = document.createElement('div'); track.className = 'bar-track';
+        const fill = document.createElement('div'); fill.className = 'bar-fill';
+        fill.style.width = Math.max(2, Math.round((Number(r.n) || 0) / max * 100)) + '%';
+        track.appendChild(fill);
+        const count = document.createElement('div'); count.className = 'bar-count';
+        count.textContent = num(r.n);
+        row.append(label, track, count);
+        host.appendChild(row);
+      });
+      show('tsTasksCard');
+    }
+
+    show('transparency');
+  })();
+})();
+
 /* ── EARLY ACCESS FORM → DevCut backend ── */
 (function () {
   const BACKEND = 'https://waitwage-production.up.railway.app';
@@ -1309,7 +1426,7 @@ setInterval(() => {
       email:   document.getElementById('f-email').value.trim().toLowerCase(),
       role:    document.getElementById('f-role').value,
       github:  document.getElementById('f-github').value.trim() || null,
-      company: document.getElementById('f-company').value.trim() || null,
+      company: document.getElementById('f-company').value.trim(),
     };
 
     try {
