@@ -13,6 +13,13 @@ let earningsStore: EarningsStore;
 let authStore: AuthStore;
 let activeTaskCount = 0;
 let activeRotator: AdRotator | undefined;
+let idleRotator: AdRotator | undefined;
+let idleTimer: NodeJS.Timeout | undefined;
+let profileTimer: NodeJS.Timeout | undefined;
+
+const PROFILE_DONE  = "devcut.profileDone";
+const PROFILE_SKIPS = "devcut.profileSkips";
+const COMPANY_DONE  = "devcut.companyDone";
 
 // Maps terminal command prefixes → task type label sent to backend for targeting
 const TASK_TYPE_MAP: Array<[string, string]> = [
@@ -130,7 +137,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("devcut.handleClick", async () => {
-      const line = activeRotator?.getCurrentLine();
+      const line = (activeRotator ?? idleRotator)?.getCurrentLine();
       if (line) {
         await sponsorClient.recordClick(line.id);
         if (line.url) vscode.env.openExternal(vscode.Uri.parse(line.url));
@@ -189,6 +196,7 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(
           "DevCut activated! You will start earning on your next build."
         );
+        maybeAskProfile(context);
       } catch (err: any) {
         const msg = err?.message || "unknown error";
         vscode.window.showErrorMessage(
@@ -398,6 +406,7 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       (vscode.window as any).onDidStartTerminalShellExecution(
         (e: vscode.TerminalShellExecutionStartEvent) => {
+          bumpActivity();
           const cmd = e.execution.commandLine.value.trimStart();
           const taskType = detectTaskType(cmd);
           if (taskType && !activeExecutions.has(e.execution)) {
@@ -418,6 +427,31 @@ export function activate(context: vscode.ExtensionContext) {
       )
     );
   }
+
+  // ── Idle ads ──────────────────────────────────────────────────────────────
+  // Any sign of life re-arms the countdown and kills a running idle ad instantly.
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument(() => bumpActivity()),
+    vscode.window.onDidChangeActiveTextEditor(() => bumpActivity()),
+    vscode.window.onDidChangeTextEditorSelection(() => bumpActivity()),
+    vscode.window.onDidChangeWindowState(() => bumpActivity()),
+    vscode.window.onDidChangeActiveTerminal(() => bumpActivity()),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("devcut")) bumpActivity();
+    }),
+    // Timers are module-level, so they must die with the extension host too.
+    { dispose: () => clearAllTimers() }
+  );
+  bumpActivity();
+
+  // ── One-time profile survey ───────────────────────────────────────────────
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("devcut.profileSurvey", () => maybeAskProfile(context, true))
+  );
+  // Deferred so it never lands on top of whatever the user opened VS Code to do.
+  profileTimer = setTimeout(() => maybeAskProfile(context), 15_000);
 
   // Auto-sync server balance once per day on startup
   const oneDayMs = 86_400_000;
@@ -454,6 +488,104 @@ export function activate(context: vscode.ExtensionContext) {
   };
 }
 
+// ── Idle ads ────────────────────────────────────────────────────────────────
+
+function stopIdleAds(): void {
+  idleRotator?.stop();
+  idleRotator = undefined;
+}
+
+function clearAllTimers(): void {
+  clearTimeout(idleTimer);
+  clearTimeout(profileTimer);
+  idleTimer = undefined;
+  profileTimer = undefined;
+  stopIdleAds();
+}
+
+/**
+ * Kill any running idle ad, then re-arm the idle countdown.
+ * Called on every sign of user activity — and by onLongRunningStart, where the
+ * activeTaskCount guard below makes it a pure "stop and stay stopped".
+ */
+function bumpActivity(): void {
+  clearTimeout(idleTimer);
+  idleTimer = undefined;
+  stopIdleAds();
+
+  const config = vscode.workspace.getConfiguration("devcut");
+  if (!config.get<boolean>("enabled", true)) return;
+  if (!config.get<boolean>("idleAdsEnabled", false)) return;
+  if (activeTaskCount > 0) return;             // build ads always win
+  if (!vscode.window.state.focused) return;    // window in the background — nobody is looking
+  if (!authStore?.getUserId()) return;         // not registered → no ad, same as builds
+
+  const minutes = Math.max(1, config.get<number>("idleMinutes", 5));
+  idleTimer = setTimeout(() => {
+    if (activeTaskCount > 0 || !vscode.window.state.focused) return;
+    idleRotator = new AdRotator(adBar, sessionBar, sponsorClient, earningsStore, config, undefined, true);
+    idleRotator.start();
+  }, minutes * 60_000);
+}
+
+// ── One-time profile survey ─────────────────────────────────────────────────
+
+// ponytail: a short list, not ISO-3166. Country is a free string server-side;
+// swap in a full list if the targeting ever needs it.
+const COUNTRIES = [
+  "India", "United States", "Brazil", "Nigeria", "Indonesia", "Pakistan",
+  "Bangladesh", "Philippines", "Germany", "United Kingdom", "Other",
+];
+
+async function maybeAskProfile(context: vscode.ExtensionContext, force = false): Promise<void> {
+  if (!authStore?.getUserId()) return;
+  if (activeTaskCount > 0) return; // never interrupt a build
+
+  // Company/university name is mandatory — no ad-serving (no earnings) until it's
+  // answered server-side (see GET /v1/sponsor-line). Keeps re-asking every trigger
+  // until filled in; unlike the optional survey below, it never gives up.
+  if (!context.globalState.get<boolean>(COMPANY_DONE)) {
+    const company = await vscode.window.showInputBox({
+      title: "DevCut — company or university name (required to earn)",
+      prompt: "This is required before ads can start showing.",
+      ignoreFocusOut: true,
+      validateInput: (v) => (v.trim() ? undefined : "Required"),
+    });
+    if (company?.trim()) {
+      if (await sponsorClient.saveProfile({ company: company.trim() })) {
+        await context.globalState.update(COMPANY_DONE, true);
+      }
+    }
+  }
+
+  if (!force) {
+    if (context.globalState.get<boolean>(PROFILE_DONE)) return;
+    if (context.globalState.get<number>(PROFILE_SKIPS, 0) >= 2) return;
+  }
+
+  const ask = (placeHolder: string, items: string[]) =>
+    vscode.window.showQuickPick(items, {
+      placeHolder,
+      title: "DevCut — 3 quick questions (Esc to skip)",
+    });
+
+  // Chained: an Esc at any step ends the survey and keeps whatever came before.
+  const experienceLevel = await ask("Your experience level?", ["student", "junior", "mid", "senior"]);
+  const primaryStack = experienceLevel
+    ? await ask("Your primary stack?", ["node", "python", "go", "java", "rust", "php", "other"])
+    : undefined;
+  const country = primaryStack ? await ask("Where are you based?", COUNTRIES) : undefined;
+
+  if (!experienceLevel && !primaryStack && !country) {
+    await context.globalState.update(PROFILE_SKIPS, context.globalState.get<number>(PROFILE_SKIPS, 0) + 1);
+    return;
+  }
+
+  if (await sponsorClient.saveProfile({ experienceLevel, primaryStack, country })) {
+    await context.globalState.update(PROFILE_DONE, true);
+  }
+}
+
 function onLongRunningStart(context: vscode.ExtensionContext, taskType?: string) {
   const config = vscode.workspace.getConfiguration("devcut");
   if (!config.get<boolean>("enabled", true)) return;
@@ -475,6 +607,7 @@ function onLongRunningStart(context: vscode.ExtensionContext, taskType?: string)
   }
 
   activeTaskCount++;
+  bumpActivity(); // stops any idle ad and leaves the countdown disarmed while a task runs
 
   if (activeTaskCount === 1) {
     activeRotator?.cancelFlash();
@@ -488,10 +621,12 @@ function onLongRunningEnd() {
   if (activeTaskCount === 0 && activeRotator) {
     activeRotator.stop();
     activeRotator = undefined;
+    bumpActivity(); // re-arm the idle countdown now that the build is done
   }
 }
 
 export function deactivate() {
+  clearAllTimers();
   if (activeRotator) {
     activeRotator.cancelFlash();
   }

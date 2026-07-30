@@ -5,6 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DevCut — Admin</title>
   <style>
+    /* Palette + spacing scale — evolved from the existing dark theme, not replaced. */
+    :root {
+      --bg:      #0f1117;
+      --panel:   #1a1d27;
+      --panel-2: #14161f;
+      --line:    #2d3148;
+      --line-2:  #232739;
+      --text:    #e2e8f0;
+      --muted:   #94a3b8;
+      --dim:     #64748b;
+      --faint:   #475569;
+      --accent:  #6366f1;
+      --accent-2:#818cf8;
+      --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px; --s6: 32px;
+      --r-sm: 6px; --r: 8px; --r-lg: 12px;
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
@@ -79,19 +96,21 @@
     /* ── Stats cards ── */
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      margin-bottom: 32px;
+      grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+      gap: var(--s3);
+      margin-bottom: var(--s6);
     }
     .stat-card {
-      background: #1a1d27;
-      border: 1px solid #2d3148;
-      border-radius: 12px;
-      padding: 20px;
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--line);
+      border-radius: var(--r-lg);
+      padding: var(--s4);
+      transition: border-color .15s, transform .15s;
     }
-    .stat-card .label { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
-    .stat-card .value { font-size: 28px; font-weight: 700; color: #fff; line-height: 1; }
-    .stat-card .sub { font-size: 12px; color: #64748b; margin-top: 6px; }
+    .stat-card:hover { border-color: #3b4166; transform: translateY(-1px); }
+    .stat-card .label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .6px; margin-bottom: var(--s2); }
+    .stat-card .value { font-size: 24px; font-weight: 700; color: #fff; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .stat-card .sub { font-size: 11px; color: var(--faint); margin-top: var(--s1); }
     .stat-card.accent { border-color: #6366f1; }
     .stat-card.accent .value { color: #818cf8; }
     .stat-card.warn { border-color: #f59e0b; }
@@ -138,11 +157,22 @@
     }
     .bar-count {
       font-size: 12px;
-      color: #64748b;
+      color: var(--muted);
       width: 48px;
       text-align: right;
       flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
     }
+    .bar-pct {
+      font-size: 11px;
+      color: var(--faint);
+      width: 44px;
+      text-align: right;
+      flex-shrink: 0;
+      font-variant-numeric: tabular-nums;
+    }
+    .bar-track { position: relative; }
+    .bar-row:hover .bar-fill { background: linear-gradient(90deg, var(--accent-2), #a5b4fc); }
 
     /* ── Activity feed ── */
     .section-title {
@@ -290,8 +320,10 @@
       border-bottom: 1px solid #2d3148;
     }
 
-    .empty { text-align: center; padding: 48px; color: #475569; font-size: 14px; }
-    .empty-row td { text-align: center; color: #475569; }
+    .empty { text-align: center; padding: 40px 24px; color: var(--faint); font-size: 13px; line-height: 1.6; }
+    .empty .empty-icon { display: block; font-size: 26px; margin-bottom: var(--s2); opacity: .65; }
+    .empty strong { display: block; color: var(--muted); font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+    .empty-row td { text-align: center; color: var(--faint); }
 
     .refresh-btn {
       background: none;
@@ -333,6 +365,82 @@
       width: 180px;
     }
     .ref-input-wrap input:focus { border-color: #6366f1; }
+
+    /* ── Advertiser logo thumbnail ──
+       Letter placeholder sits underneath; a broken/absent image just reveals it. */
+    .adv-cell { display: flex; align-items: center; gap: 10px; min-width: 140px; }
+    .logo-thumb {
+      position: relative;
+      width: 28px; height: 28px;
+      flex-shrink: 0;
+      border-radius: var(--r-sm);
+      background: var(--line);
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      overflow: hidden;
+    }
+    .logo-thumb::before { content: attr(data-initial); }
+    .logo-thumb img {
+      position: absolute;
+      inset: 0;
+      width: 100%; height: 100%;
+      object-fit: contain;
+      background: var(--panel-2);
+    }
+    .adv-name { display: block; color: #fff; font-weight: 600; }
+    .adv-sub { display: block; font-size: 11px; color: var(--faint); margin-top: 1px; }
+
+    /* ── Inquiries ── */
+    .inline-select {
+      background: var(--bg);
+      border: 1px solid var(--line);
+      color: var(--text);
+      border-radius: var(--r-sm);
+      padding: 4px 8px;
+      font-size: 12px;
+      font-family: inherit;
+      outline: none;
+      cursor: pointer;
+    }
+    .inline-select:focus { border-color: var(--accent); }
+    .cell-clip { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #cbd5e1; }
+    .stack-hint { font-size: 11px; color: var(--faint); margin-top: 2px; }
+    .banner {
+      display: flex;
+      align-items: center;
+      gap: var(--s3);
+      background: #1e1a33;
+      border: 1px solid #3b3168;
+      border-left: 3px solid var(--accent);
+      border-radius: var(--r-lg);
+      padding: var(--s3) var(--s4);
+      margin-bottom: var(--s4);
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+    .banner .banner-icon { font-size: 18px; }
+
+    /* ── Responsive (≤900px) ── */
+    @media (max-width: 900px) {
+      header { padding: var(--s3) var(--s4); }
+      nav { padding: 0 var(--s2); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      nav::-webkit-scrollbar { height: 0; }
+      nav button { padding: 12px 12px; font-size: 13px; }
+      main { padding: var(--s4); }
+      .stats-grid { grid-template-columns: repeat(auto-fit, minmax(136px, 1fr)); gap: var(--s2); }
+      .stat-card { padding: var(--s3); }
+      .stat-card .value { font-size: 20px; }
+      .bar-label { width: 96px; }
+      .bar-pct { display: none; }
+      .form-row { flex-direction: column; gap: 0; }
+      .modal { padding: var(--s5) var(--s4); }
+      .toolbar { flex-direction: column; align-items: stretch; gap: var(--s2); }
+      .cell-clip, .sponsor-text { max-width: 160px; }
+    }
   </style>
 </head>
 <body>
@@ -346,6 +454,7 @@
 <nav>
   <button class="active" onclick="showPage('overview', this)">Overview</button>
   <button onclick="showPage('sponsors', this)">Manage Ads</button>
+  <button id="nav-inquiries" onclick="showPage('inquiries', this)">Advertiser Inquiries</button>
   <button onclick="showPage('invites', this)">Invites</button>
   <button onclick="showPage('users', this)">Users</button>
   <button id="nav-withdrawals" onclick="showPage('withdrawals', this)">Withdrawals</button>
@@ -358,6 +467,15 @@
        Overview
   ════════════════════════════════════════════════════════════ -->
   <div id="page-overview" class="page active">
+    <div class="banner" id="inquiry-banner" style="display:none">
+      <span class="banner-icon">📬</span>
+      <div style="flex:1">
+        <strong id="inquiry-banner-count">0</strong> new advertiser inquir<span id="inquiry-banner-plural">ies</span>
+        waiting in the <em>Advertiser Inquiries</em> tab.
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="showPage('inquiries', document.getElementById('nav-inquiries'))">Review</button>
+    </div>
+
     <div class="stats-grid" id="overview-stats">
       <div class="stat-card">
         <div class="label">Total Impressions</div>
@@ -431,6 +549,7 @@
             <th>Advertiser</th>
             <th>Ad Text</th>
             <th>URL</th>
+            <th>Slot</th>
             <th>Bid (paise)</th>
             <th>Daily Budget</th>
             <th>Impressions</th>
@@ -441,7 +560,54 @@
           </tr>
         </thead>
         <tbody id="sponsors-tbody">
-          <tr><td colspan="10" class="loading-text">Loading...</td></tr>
+          <tr><td colspan="11" class="loading-text">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       Advertiser Inquiries
+  ════════════════════════════════════════════════════════════ -->
+  <div id="page-inquiries" class="page">
+    <div class="banner">
+      <span class="banner-icon">📬</span>
+      <div>
+        Every submission from the landing page's <strong>“Advertise with us”</strong> form lands here
+        (and is emailed to you). Set a status as you work the lead, then
+        <strong>Convert to Ad Slot</strong> to turn a won deal into a live ad.
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="section-title" style="margin:0">Advertiser Inquiries</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select class="inline-select" id="inq-filter" onchange="renderInquiries()">
+          <option value="">All statuses</option>
+          <option value="new">New</option>
+          <option value="contacted">Contacted</option>
+          <option value="won">Won</option>
+          <option value="rejected">Rejected</option>
+        </select>
+        <button class="refresh-btn" onclick="loadInquiries()">↻ refresh</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Contact</th>
+            <th>Email</th>
+            <th>Budget</th>
+            <th>Slot</th>
+            <th>Ad Text</th>
+            <th>Received</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="inquiries-tbody">
+          <tr><td colspan="9" class="loading-text">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -596,6 +762,32 @@
       <label>URL</label>
       <input id="f-url" placeholder="https://..." />
     </div>
+    <div class="form-group">
+      <label>Logo URL <span style="color:#475569">— optional</span></label>
+      <input id="f-logo" placeholder="https://cdn.example.com/logo.png" onchange="previewLogo()" />
+      <div class="hint" style="display:flex;align-items:center;gap:8px;margin-top:8px">
+        <span class="logo-thumb" id="f-logo-thumb" data-initial="?"></span>
+        <span>Square PNG/SVG works best. Broken links are hidden automatically.</span>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Slot Type</label>
+        <select id="f-slot-type">
+          <option value="all">All slots</option>
+          <option value="build">Build</option>
+          <option value="test">Test</option>
+          <option value="install">Install</option>
+          <option value="idle">Idle time</option>
+        </select>
+        <div class="hint">Where this ad is allowed to show.</div>
+      </div>
+      <div class="form-group">
+        <label>Target Stack <span style="color:#475569">— optional</span></label>
+        <input id="f-target-stack" placeholder="node,python,docker" />
+        <div class="hint">Comma-separated task types / stacks. Blank = everyone.</div>
+      </div>
+    </div>
     <div class="form-row">
       <div class="form-group">
         <label>Payout (paise) <span style="color:#475569">— dev earns</span></label>
@@ -718,6 +910,15 @@
     try { return new URL(u).hostname; } catch { return u; }
   }
 
+  // Advertiser-supplied URLs pass zod's .url() even as `javascript:...`.
+  // Anything that isn't http(s) never becomes a clickable href in the admin origin.
+  function safeUrl(u) {
+    try {
+      const p = new URL(u).protocol;
+      return (p === 'http:' || p === 'https:') ? u : '#';
+    } catch { return '#'; }
+  }
+
   function ctrClass(ctr) {
     const n = parseFloat(ctr);
     if (n >= 5) return 'ctr-good';
@@ -745,6 +946,7 @@
       loaded[name] = true;
       if (name === 'overview') loadOverview();
       if (name === 'sponsors') loadSponsors();
+      if (name === 'inquiries') loadInquiries();
       if (name === 'invites') loadInvites();
       if (name === 'users') loadUsers();
       if (name === 'withdrawals') loadWithdrawals();
@@ -778,16 +980,21 @@
       const bChart = document.getElementById('task-breakdown-chart');
       if (breakdown.length) {
         bSection.style.display = '';
-        const maxN = Math.max(...breakdown.map(x => Number(x.n) || 0), 1);
-        bChart.innerHTML = breakdown.map(row => {
-          const pct = Math.round((Number(row.n) / maxN) * 100);
+        const nums = breakdown.map(x => Number(x.n) || 0);
+        const maxN = Math.max(...nums, 1);
+        const total = nums.reduce((a, b) => a + b, 0) || 1;
+        bChart.innerHTML = breakdown.map((row, i) => {
+          const n = nums[i];
+          const pct = Math.round((n / maxN) * 100);
+          const share = ((n / total) * 100).toFixed(1);
           return `
             <div class="bar-row">
               <div class="bar-label" title="${esc(row.task_type)}">${esc(row.task_type)}</div>
               <div class="bar-track">
                 <div class="bar-fill" style="width:${pct}%"></div>
               </div>
-              <div class="bar-count">${Number(row.n).toLocaleString()}</div>
+              <div class="bar-count">${n.toLocaleString()}</div>
+              <div class="bar-pct">${share}%</div>
             </div>
           `;
         }).join('');
@@ -799,7 +1006,7 @@
       const list = document.getElementById('activity-list');
       const recent = d.recent || [];
       if (!recent.length) {
-        list.innerHTML = '<div class="empty">No activity yet — waiting for extension users.</div>';
+        list.innerHTML = '<div class="empty"><span class="empty-icon">📡</span><strong>No activity yet</strong>Impressions and clicks appear here as soon as an extension user hits a slow build.</div>';
       } else {
         list.innerHTML = recent.map(r => `
           <div class="activity-item">
@@ -838,28 +1045,57 @@
   setInterval(() => {
     if (document.getElementById('page-overview').classList.contains('active')) {
       loadOverview();
+      loadInquiries(); // keeps the "new inquiry" badge honest
     }
   }, 30000);
 
   // ── Sponsors ─────────────────────────────────────────────────
+  // ponytail: rows reference SPONSORS[i] instead of inlining JSON in onclick —
+  // advertiser-supplied text can contain quotes and must never reach an attribute.
+  let SPONSORS = [];
+
+  // Logo cell: letter placeholder underneath, image on top, onerror drops the image.
+  function logoCell(name, logoUrl) {
+    const initial = esc(String(name || '?').trim().charAt(0).toUpperCase() || '?');
+    const img = logoUrl
+      ? `<img src="${esc(safeUrl(logoUrl))}" alt="" onerror="this.remove()" />`
+      : '';
+    return `<span class="logo-thumb" data-initial="${initial}">${img}</span>`;
+  }
+
+  const SLOT_LABELS = { all: 'All', build: 'Build', test: 'Test', install: 'Install', idle: 'Idle' };
+
   async function loadSponsors() {
     setLoading('sponsors', true);
     try {
-      const sponsors = await apiFetch('/api/sponsors').then(r => r.json());
+      SPONSORS = await apiFetch('/api/sponsors').then(r => r.json());
       const tbody = document.getElementById('sponsors-tbody');
-      if (!sponsors.length) {
-        tbody.innerHTML = '<tr><td colspan="10" class="empty">No ads yet. Click "Add Ad" to create one.</td></tr>';
+      if (!SPONSORS.length) {
+        tbody.innerHTML = '<tr><td colspan="11" class="empty"><span class="empty-icon">📢</span><strong>No ad slots yet</strong>Click “+ Add Ad”, or convert an advertiser inquiry into a slot.</td></tr>';
         return;
       }
-      tbody.innerHTML = sponsors.map(s => {
+      tbody.innerHTML = SPONSORS.map((s, i) => {
         const budgetDisplay = s.budget_paise_daily != null
           ? paise2rupee(s.budget_paise_daily) + '/day'
           : '<span style="color:#475569">Unlimited</span>';
+        const slot = String(s.slot_type || 'all');
+        const stack = s.target_stack
+          ? `<div class="stack-hint" title="${esc(s.target_stack)}">→ ${esc(s.target_stack)}</div>`
+          : '';
         return `
           <tr>
-            <td><strong>${esc(s.name)}</strong></td>
+            <td>
+              <div class="adv-cell">
+                ${logoCell(s.name, s.logo_url)}
+                <span><span class="adv-name">${esc(s.name)}</span></span>
+              </div>
+            </td>
             <td><div class="sponsor-text" title="${esc(s.text)}">${esc(s.text)}</div></td>
-            <td><a class="sponsor-url" href="${esc(s.url)}" target="_blank" rel="noopener">${esc(shortUrl(s.url))}</a></td>
+            <td><a class="sponsor-url" href="${esc(safeUrl(s.url))}" target="_blank" rel="noopener">${esc(shortUrl(s.url))}</a></td>
+            <td>
+              <span class="pill ${slot === 'idle' ? 'pill-yellow' : slot === 'all' ? 'pill-gray' : 'pill-blue'}">${esc(SLOT_LABELS[slot] || slot)}</span>
+              ${stack}
+            </td>
             <td>${s.bid_paise != null ? s.bid_paise + 'p' : (s.payout_paise || '—') + 'p'}</td>
             <td>${budgetDisplay}</td>
             <td>${(s.impressions || 0).toLocaleString()}</td>
@@ -867,8 +1103,8 @@
             <td class="${ctrClass(s.ctr)}">${s.ctr != null ? s.ctr + '%' : '0%'}</td>
             <td><span class="pill ${s.active ? 'pill-green' : 'pill-gray'}">${s.active ? 'Active' : 'Paused'}</span></td>
             <td><div class="td-actions">
-              <button class="btn btn-ghost btn-sm" onclick='openSponsorModal(${JSON.stringify(s)})'>Edit</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteAd('${esc(s.id)}', '${esc(s.name)}')">Delete</button>
+              <button class="btn btn-ghost btn-sm" onclick="openSponsorModal(SPONSORS[${i}])">Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteAd(SPONSORS[${i}])">Delete</button>
             </div></td>
           </tr>
         `;
@@ -895,8 +1131,19 @@
       document.getElementById('f-budget').value = '';
     }
     document.getElementById('f-active').value = sponsor ? (sponsor.active ? '1' : '0') : '1';
+    document.getElementById('f-logo').value = sponsor ? (sponsor.logo_url || '') : '';
+    document.getElementById('f-slot-type').value = sponsor ? (sponsor.slot_type || 'all') : 'all';
+    document.getElementById('f-target-stack').value = sponsor ? (sponsor.target_stack || '') : '';
+    previewLogo();
     document.getElementById('sponsor-modal-overlay').classList.add('open');
     document.getElementById('f-name').focus();
+  }
+
+  function previewLogo() {
+    const url = document.getElementById('f-logo').value.trim();
+    const name = document.getElementById('f-name').value.trim();
+    document.getElementById('f-logo-thumb').outerHTML =
+      logoCell(name, url).replace('class="logo-thumb"', 'class="logo-thumb" id="f-logo-thumb"');
   }
 
   function closeSponsorModal() {
@@ -909,6 +1156,8 @@
   async function saveAd() {
     const id = document.getElementById('edit-id').value;
     const budgetRaw = document.getElementById('f-budget').value.trim();
+    const logo = document.getElementById('f-logo').value.trim();
+    const stack = document.getElementById('f-target-stack').value.trim();
     const body = {
       name: document.getElementById('f-name').value.trim(),
       text: document.getElementById('f-text').value.trim(),
@@ -917,6 +1166,9 @@
       bid_paise: parseInt(document.getElementById('f-bid').value) || 42,
       budget_paise_daily: budgetRaw !== '' ? Math.round(parseFloat(budgetRaw) * 100) : null,
       active: document.getElementById('f-active').value === '1',
+      logo_url: logo || null,
+      slot_type: document.getElementById('f-slot-type').value,
+      target_stack: stack || null,
     };
     if (!body.name || !body.text || !body.url) {
       alert('Advertiser name, ad text, and URL are required.');
@@ -939,16 +1191,140 @@
     }
   }
 
-  async function deleteAd(id, name) {
-    if (!confirm(`Delete ad for "${name}"? This also removes its impression/click history.`)) return;
+  async function deleteAd(sponsor) {
+    if (!sponsor) return;
+    if (!confirm(`Delete ad for "${sponsor.name}"? This also removes its impression/click history.`)) return;
     try {
-      await apiFetch(`/api/sponsors/${id}`, { method: 'DELETE' });
+      await apiFetch(`/api/sponsors/${encodeURIComponent(sponsor.id)}`, { method: 'DELETE' });
       loaded['sponsors'] = false;
       loadSponsors();
     } catch(e) {
       alert('Error deleting ad: ' + e.message);
       return;
     }
+  }
+
+  // ── Advertiser Inquiries ─────────────────────────────────────
+  // Everything here is advertiser-supplied. It only ever reaches the DOM via esc().
+  let INQUIRIES = [];
+
+  const INQ_STATUSES = ['new', 'contacted', 'won', 'rejected'];
+  const INQ_PILL = { new: 'pill-yellow', contacted: 'pill-blue', won: 'pill-green', rejected: 'pill-red' };
+
+  async function loadInquiries() {
+    setLoading('inquiries', true);
+    try {
+      INQUIRIES = await apiFetch('/api/advertiser-inquiries').then(r => r.json());
+      if (!Array.isArray(INQUIRIES)) INQUIRIES = [];
+      renderInquiries();
+      updateInquiryBadge(INQUIRIES.filter(q => (q.status || 'new') === 'new').length);
+    } catch(e) {
+      console.error('Inquiries load error:', e);
+      document.getElementById('inquiries-tbody').innerHTML =
+        '<tr><td colspan="9" class="empty"><span class="empty-icon">⚠️</span><strong>Could not load inquiries</strong>Check the server logs and hit refresh.</td></tr>';
+    } finally {
+      setLoading('inquiries', false);
+    }
+  }
+
+  function renderInquiries() {
+    const tbody = document.getElementById('inquiries-tbody');
+    const filter = document.getElementById('inq-filter').value;
+    const rows = INQUIRIES
+      .map((q, i) => ({ q, i }))
+      .filter(({ q }) => !filter || (q.status || 'new') === filter);
+
+    if (!rows.length) {
+      tbody.innerHTML = INQUIRIES.length
+        ? '<tr><td colspan="9" class="empty"><span class="empty-icon">🔍</span><strong>Nothing in this status</strong>Switch the filter to “All statuses”.</td></tr>'
+        : '<tr><td colspan="9" class="empty"><span class="empty-icon">📭</span><strong>No advertiser inquiries yet</strong>Submissions from the landing page “Advertise with us” form show up here.</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = rows.map(({ q, i }) => {
+      const status = String(q.status || 'new');
+      const slot = String(q.slot_type || 'all');
+      const opts = INQ_STATUSES.map(s =>
+        `<option value="${s}"${s === status ? ' selected' : ''}>${s}</option>`
+      ).join('');
+      const website = q.website
+        ? `<div class="stack-hint"><a class="sponsor-url" href="${esc(safeUrl(q.website))}" target="_blank" rel="noopener">${esc(shortUrl(q.website))}</a></div>`
+        : '';
+      const notes = q.notes
+        ? `<div class="stack-hint" title="${esc(q.notes)}">note: ${esc(String(q.notes).slice(0, 40))}</div>`
+        : '';
+      return `
+        <tr>
+          <td><strong>${esc(q.company)}</strong>${website}</td>
+          <td>${esc(q.contact_name || '—')}${q.product_type ? `<div class="stack-hint">${esc(q.product_type)}</div>` : ''}</td>
+          <td><a class="sponsor-url" href="mailto:${esc(q.email)}">${esc(q.email)}</a></td>
+          <td>${esc(q.budget_range || '—')}</td>
+          <td><span class="pill ${slot === 'idle' ? 'pill-yellow' : slot === 'all' ? 'pill-gray' : 'pill-blue'}">${esc(SLOT_LABELS[slot] || slot)}</span></td>
+          <td><div class="cell-clip" title="${esc(q.ad_text)}">${esc(q.ad_text)}</div>${notes}</td>
+          <td>${fmtDateTime(q.created_at)}</td>
+          <td>
+            <span class="pill ${INQ_PILL[status] || 'pill-gray'}">${esc(status)}</span>
+            <div style="margin-top:6px">
+              <select class="inline-select" onchange="setInquiryStatus(${i}, this.value)">${opts}</select>
+            </div>
+          </td>
+          <td><div class="td-actions">
+            <button class="btn btn-success btn-sm" onclick="convertInquiry(${i})">Convert to Ad Slot</button>
+          </div></td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  async function setInquiryStatus(i, status) {
+    const q = INQUIRIES[i];
+    if (!q) return;
+    try {
+      const res = await apiFetch(`/api/advertiser-inquiries/${encodeURIComponent(q.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, notes: q.notes || undefined })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      q.status = status;
+      renderInquiries();
+      updateInquiryBadge(INQUIRIES.filter(x => (x.status || 'new') === 'new').length);
+    } catch(e) {
+      alert('Error updating inquiry: ' + e.message);
+      renderInquiries();
+    }
+  }
+
+  async function convertInquiry(i) {
+    const q = INQUIRIES[i];
+    if (!q) return;
+    if (!confirm(`Create a live ad slot from "${q.company}"?\n\nThe inquiry will be marked as won.`)) return;
+    try {
+      const res = await apiFetch(`/api/advertiser-inquiries/${encodeURIComponent(q.id)}/convert`, { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      const out = await res.json();
+      loaded['sponsors'] = false;
+      await loadInquiries();
+      alert('Ad slot created' + (out.sponsorId ? ` (${out.sponsorId})` : '') + '. Open "Manage Ads" to set its budget and logo.');
+    } catch(e) {
+      alert('Error converting inquiry: ' + e.message);
+    }
+  }
+
+  function updateInquiryBadge(count) {
+    const btn = document.getElementById('nav-inquiries');
+    const existing = btn.querySelector('.nav-badge');
+    if (existing) existing.remove();
+    if (count > 0) {
+      const badge = document.createElement('span');
+      badge.className = 'nav-badge';
+      badge.textContent = count;
+      btn.appendChild(badge);
+    }
+    const banner = document.getElementById('inquiry-banner');
+    banner.style.display = count > 0 ? '' : 'none';
+    document.getElementById('inquiry-banner-count').textContent = count;
+    document.getElementById('inquiry-banner-plural').textContent = count === 1 ? 'y' : 'ies';
   }
 
   // ── Invites ──────────────────────────────────────────────────
@@ -958,7 +1334,7 @@
       const invites = await apiFetch('/api/invites').then(r => r.json());
       const tbody = document.getElementById('invites-tbody');
       if (!invites.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty">No invites yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="empty"><span class="empty-icon">🎟️</span><strong>No invites yet</strong>Create one to onboard a developer.</td></tr>';
         return;
       }
       tbody.innerHTML = invites.map(inv => {
@@ -1027,7 +1403,7 @@
       const users = await apiFetch('/api/users').then(r => r.json());
       const tbody = document.getElementById('users-tbody');
       if (!users.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">No registered users yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="empty"><span class="empty-icon">👥</span><strong>No registered developers yet</strong>Users appear here after they sign in from the extension.</td></tr>';
         return;
       }
       tbody.innerHTML = users.map(u => `
@@ -1073,7 +1449,7 @@
   function renderWithdrawalsPending(rows) {
     const tbody = document.getElementById('withdrawals-pending-tbody');
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">No pending withdrawals.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="5" class="empty"><span class="empty-icon">✅</span><strong>All caught up</strong>No withdrawals waiting for approval.</td></tr>';
       return;
     }
     tbody.innerHTML = rows.map(w => `
@@ -1098,7 +1474,7 @@
   function renderWithdrawalsHistory(rows) {
     const tbody = document.getElementById('withdrawals-history-tbody');
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty">No history yet.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty"><span class="empty-icon">🧾</span><strong>No payout history yet</strong>Approved and rejected withdrawals land here.</td></tr>';
       return;
     }
     tbody.innerHTML = rows.map(w => {
@@ -1157,7 +1533,7 @@
       const teams = await apiFetch('/api/teams').then(r => r.json());
       const tbody = document.getElementById('teams-tbody');
       if (!teams.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="empty">No teams yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="empty"><span class="empty-icon">🏢</span><strong>No teams yet</strong>Teams show up when a dev creates or joins one.</td></tr>';
         return;
       }
       tbody.innerHTML = teams.map(t => `
@@ -1181,6 +1557,9 @@
   (async () => {
     loaded['overview'] = true;
     await loadOverview();
+    // Seed the inquiry badge/banner so a new lead is visible without opening the tab.
+    loaded['inquiries'] = true;
+    await loadInquiries();
   })();
 </script>
 </body>

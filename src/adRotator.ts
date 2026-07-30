@@ -15,12 +15,20 @@ export class AdRotator {
     private client: SponsorClient,
     private store: EarningsStore,
     private config: vscode.WorkspaceConfiguration,
-    private taskType?: string
-  ) {}
+    private taskType?: string,
+    /** Idle mode: lower-paying inventory, slower rotation, silent exit. */
+    private idle = false
+  ) {
+    // Label idle impressions so they get their own byTaskType row instead of an
+    // unattributed null. Only ever fires for the idle rotator (always built with
+    // taskType undefined) — a build's npm/docker/cargo taskType is never touched.
+    if (idle) this.taskType = "idle";
+  }
 
   start(): void {
     this.store.startSession();
-    const minMs = this.config.get<number>("minTaskSeconds", 3) * 1000;
+    // Idle mode already waited out devcut.idleMinutes — no extra anti-flicker delay needed.
+    const minMs = this.idle ? 0 : this.config.get<number>("minTaskSeconds", 3) * 1000;
     this.pendingShowTimer = setTimeout(() => this.firstShow(), minMs);
   }
 
@@ -30,6 +38,12 @@ export class AdRotator {
     clearInterval(this.rotationInterval);
     const paise = this.store.getSessionEarningsPaise();
     this.store.endSession();
+    // ponytail: idle ads exit silently. stop() fires the instant the user types —
+    // a "you earned ₹X" flash right then is exactly the interruption idle mode must not cause.
+    if (this.idle) {
+      this.bar.hide();
+      return;
+    }
     this.flash(paise);
   }
 
@@ -46,14 +60,16 @@ export class AdRotator {
   private async firstShow(): Promise<void> {
     if (this.stopped) return;
     await this.rotate();
-    const rotMs = this.config.get<number>("adRotationSeconds", 30) * 1000;
+    const rotMs = this.idle
+      ? this.config.get<number>("idleAdRotationSeconds", 120) * 1000
+      : this.config.get<number>("adRotationSeconds", 30) * 1000;
     this.rotationInterval = setInterval(() => this.rotate(), rotMs);
   }
 
   private async rotate(): Promise<void> {
     if (this.stopped) return;
     try {
-      const line = await this.client.fetchCurrentLine(this.taskType);
+      const line = await this.client.fetchCurrentLine(this.taskType, this.idle);
       if (!line || this.stopped) return;
       this.currentLine = line;
       this.bar.text = `$(megaphone) ${line.text}`;

@@ -19,6 +19,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS beta_invites (
     code             TEXT PRIMARY KEY,
     email            TEXT NOT NULL,
+    company          TEXT,
     created_at       INTEGER NOT NULL DEFAULT (unixepoch()),
     used_at          INTEGER,
     used_by_user_id  TEXT
@@ -106,6 +107,22 @@ for (const sql of migrations) {
 
 try { db.exec("ALTER TABLE sponsors ADD COLUMN bid_paise INTEGER NOT NULL DEFAULT 42"); } catch (_) {}
 try { db.exec("ALTER TABLE sponsors ADD COLUMN budget_paise_daily INTEGER"); } catch (_) {}
+try { db.exec("ALTER TABLE sponsors ADD COLUMN budget_paise_total INTEGER"); } catch (_) {}
+
+// Advertiser logo + slot/stack targeting (see GET /v1/sponsor-line).
+// Existing rows keep slot_type NULL — the selector treats NULL as 'all'.
+try { db.exec("ALTER TABLE sponsors ADD COLUMN logo_url TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE sponsors ADD COLUMN slot_type TEXT DEFAULT 'all'"); } catch (_) {}
+try { db.exec("ALTER TABLE sponsors ADD COLUMN target_stack TEXT"); } catch (_) {}
+
+// Background-questions survey (see POST /v1/me/profile)
+try { db.exec("ALTER TABLE users ADD COLUMN experience_level TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN primary_stack TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN country TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE users ADD COLUMN profile_done_at INTEGER"); } catch (_) {}
+// Mandatory company/university name — required at signup, backfilled via the
+// extension onboarding survey for users who registered before this existed.
+try { db.exec("ALTER TABLE users ADD COLUMN company TEXT"); } catch (_) {}
 
 // Store payout_paise per impression so earnings survive sponsor deletion
 try { db.exec("ALTER TABLE impressions ADD COLUMN payout_paise INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
@@ -120,6 +137,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_impressions_ts      ON impressions(ts);
   CREATE INDEX IF NOT EXISTS idx_impressions_sponsor ON impressions(sponsor_id);
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+  CREATE INDEX IF NOT EXISTS idx_clicks_user          ON clicks(user_id);
 `);
 
 // Advertiser inquiries submitted via the landing page
