@@ -1,0 +1,3 @@
+1. make the company for user or universty name for the user mandate to fill
+2. machenism in admin where when they put add details and budget of add the users will not be able to watch or earn from that add more then what the budget limit is set as user usage vary we will be having a budget limit for add like 500 then 5 users active and some will earn 50 some will earn 300 and  20 and so on but in the end the add will stop for user automatically when budgte hits which will not be show to user cause for user new add will start and they will not know about add budget
+3. different add for different users

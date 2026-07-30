@@ -68,6 +68,10 @@
       {
         "command": "devcut.testAd",
         "title": "DevCut: Test Ad (10s demo)"
+      },
+      {
+        "command": "devcut.profileSurvey",
+        "title": "DevCut: Answer Profile Questions (3 quick picks)"
       }
     ],
     "configuration": {
@@ -92,6 +96,21 @@
           "type": "number",
           "default": 30,
           "description": "Seconds between ad rotations during a long-running task. Each rotation is a new impression."
+        },
+        "devcut.idleAdsEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also show sponsored lines while VS Code is idle (window focused, no typing). Idle ads pay a lower rate than build ads, rotate slowly, and disappear the moment you touch the keyboard. Off by default — turn it on to earn while you read or think."
+        },
+        "devcut.idleMinutes": {
+          "type": "number",
+          "default": 5,
+          "description": "Minutes of no editor, terminal, or selection activity before idle ads start. Only applies when devcut.idleAdsEnabled is on."
+        },
+        "devcut.idleAdRotationSeconds": {
+          "type": "number",
+          "default": 120,
+          "description": "Seconds between idle ad rotations. Deliberately slower than devcut.adRotationSeconds — idle impressions are low-value and should not be distracting."
         },
         "devcut.earningsFlashSeconds": {
           "type": "number",

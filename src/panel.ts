@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { SponsorClient, EarningsSummary, WithdrawalRecord } from "./sponsorClient";
+import { SponsorClient, EarningsSummary, WithdrawalRecord, SponsorLine } from "./sponsorClient";
 import { EarningsStore } from "./earningsStore";
 
 let panel: vscode.WebviewPanel | undefined;
@@ -39,14 +39,15 @@ export async function showEarningsPanel(
 async function render(client: SponsorClient, store: EarningsStore): Promise<void> {
   if (!panel) return;
   panel.webview.html = loadingHtml();
-  const [earnings, history, me] = await Promise.all([
+  const [earnings, history, me, sponsor] = await Promise.all([
     client.fetchEarnings(),
     client.fetchWithdrawalHistory(),
     client.fetchMe(),
+    client.fetchCurrentLine(), // read-only: impressions are a separate POST, so this pays nobody
   ]);
   if (earnings) store.setServerBalance(earnings.totalPaise);
   if (!panel) return; // closed while fetching
-  panel.webview.html = dashboardHtml(earnings, history, me?.user.upi_id, store);
+  panel.webview.html = dashboardHtml(earnings, history, me?.user.upi_id, store, sponsor);
 }
 
 const esc = (s: unknown) =>
@@ -58,8 +59,14 @@ const rupees = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
 const dateStr = (unixSec?: number | null) =>
   unixSec ? new Date(unixSec * 1000).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—";
 
-function baseStyle(): string {
-  return `<style>
+// CSP must live in <head> to be honoured. `img-src https:` is what lets the
+// advertiser logo load; everything else stays locked to 'none'. The inline
+// 'unsafe-inline' entries are for this file's own <style> and onclick handlers.
+const CSP =
+  "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';";
+
+function head(): string {
+  return `<head><meta http-equiv="Content-Security-Policy" content="${CSP}"><style>
     body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 24px; max-width: 640px; margin: 0 auto; }
     h1 { font-size: 1.3em; letter-spacing: -.02em; }
     .muted { color: var(--vscode-descriptionForeground); }
@@ -82,22 +89,42 @@ function baseStyle(): string {
     .pill.completed { background: rgba(46,160,67,.2); color: var(--vscode-charts-green, #2ea043); }
     .pill.rejected { background: rgba(248,81,73,.2); color: var(--vscode-charts-red, #f85149); }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  </style>`;
+    .logo { width: 44px; height: 44px; object-fit: contain; border-radius: 6px; background: rgba(127,127,127,.12); flex: none; }
+  </style></head>`;
 }
 
 function loadingHtml(): string {
-  return `<!DOCTYPE html><html><body>${baseStyle()}<p class="muted">Loading your earnings…</p></body></html>`;
+  return `<!DOCTYPE html><html>${head()}<body><p class="muted">Loading your earnings…</p></body></html>`;
+}
+
+/** "Currently sponsored by" card — the only place a webview can show the advertiser logo. */
+function sponsorCard(line: SponsorLine | undefined): string {
+  if (!line) return "";
+  // Only https logos: anything else is either untrustworthy or blocked by the CSP anyway.
+  const logo = line.logoUrl && /^https:\/\//i.test(line.logoUrl)
+    ? `<img class="logo" src="${esc(line.logoUrl)}" alt="">`
+    : "";
+  if (!logo && !line.advertiser) return "";
+  return `<div class="card row" style="justify-content:flex-start">
+      ${logo}
+      <div style="flex:1;min-width:180px">
+        <div class="muted" style="font-size:.85em">Currently sponsored by</div>
+        <div style="font-weight:700">${esc(line.advertiser || "a DevCut sponsor")}</div>
+        <div class="muted">${esc(line.text)}</div>
+      </div>
+    </div>`;
 }
 
 function dashboardHtml(
   earnings: EarningsSummary | undefined,
   history: WithdrawalRecord[] | undefined,
   upiId: string | undefined,
-  store: EarningsStore
+  store: EarningsStore,
+  sponsor?: SponsorLine
 ): string {
   // Offline fallback: local tally only, no cashout
   if (!earnings) {
-    return `<!DOCTYPE html><html><body>${baseStyle()}
+    return `<!DOCTYPE html><html>${head()}<body>
       <h1>⚡ DevCut Earnings</h1>
       <div class="card">
         <p>⚠️ Could not reach the DevCut backend — showing your local tally.</p>
@@ -135,7 +162,7 @@ function dashboardHtml(
     )
     .join("");
 
-  return `<!DOCTYPE html><html><body>${baseStyle()}
+  return `<!DOCTYPE html><html>${head()}<body>
     <div class="row">
       <h1>⚡ DevCut Earnings</h1>
       <button class="secondary" onclick="vscode.postMessage({command:'refresh'})">↻ Refresh</button>
@@ -153,6 +180,8 @@ function dashboardHtml(
         </span>
       </div>
     </div>
+
+    ${sponsorCard(sponsor)}
 
     <div class="card grid">
       <div class="stat"><div class="n">${rupees(earnings.totalPaise)}</div><div class="l muted">Lifetime earned</div></div>

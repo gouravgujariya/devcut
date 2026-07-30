@@ -15,6 +15,18 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// zod's .url() accepts javascript: and data: — and advertiser URLs arrive on an
+// unauthenticated form, then reach vscode.env.openExternal() in the extension and
+// href/src in two dashboards. Reject non-http(s) here, at the one boundary they
+// all enter through, rather than in each renderer.
+// Regex, not new URL(): zod still runs a refinement after .url() already failed,
+// so constructing a URL here throws a raw TypeError on junk input and turns a
+// 400 into a 500.
+const httpUrl = z.string().url().refine(
+  (u) => /^https?:\/\//i.test(u),
+  { message: "url must be http(s)" }
+);
+
 const app = express();
 // Behind Railway's proxy — makes req.ip the real client IP so rate limits key correctly
 app.set("trust proxy", 1);
@@ -59,7 +71,7 @@ app.post("/v1/register", authRateLimit, (req, res) => {
 
   try {
     db.transaction(() => {
-      db.prepare("INSERT INTO users (id, email, invite_code) VALUES (?, ?, ?)").run(userId, invite.email, invite.code);
+      db.prepare("INSERT INTO users (id, email, invite_code, company) VALUES (?, ?, ?, ?)").run(userId, invite.email, invite.code, invite.company || null);
       db.prepare("UPDATE beta_invites SET used_at = ?, used_by_user_id = ? WHERE code = ?").run(Math.floor(Date.now() / 1000), userId, invite.code);
       db.prepare("INSERT INTO refresh_tokens (id, user_id) VALUES (?, ?)").run(refreshToken, userId);
     })();
@@ -95,7 +107,11 @@ app.post("/v1/login", authRateLimit, (req, res) => {
 
 // GET /v1/me  — lightweight token validation + profile
 app.get("/v1/me", requireAuth, (req, res) => {
-  const user = db.prepare("SELECT id, email, upi_id, created_at FROM users WHERE id = ?").get(req.userId);
+  const user = db.prepare(
+    `SELECT id, email, upi_id, created_at, company,
+            experience_level, primary_stack, country, profile_done_at
+     FROM users WHERE id = ?`
+  ).get(req.userId);
   const team = db.prepare(
     "SELECT t.id, t.name, t.code FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ?"
   ).get(req.userId);
@@ -146,9 +162,103 @@ app.put("/v1/profile/upi", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /v1/me/profile  — "small background questions" survey (all fields optional)
+app.post("/v1/me/profile", requireAuth, (req, res) => {
+  const parse = z.object({
+    experienceLevel: z.enum(["student", "junior", "mid", "senior"]).optional(),
+    primaryStack:    z.enum(["node", "python", "go", "java", "rust", "php", "other"]).optional(),
+    country:         z.string().max(64).optional(),
+    company:         z.string().min(1).max(120).optional(),
+  }).safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: "invalid body", details: parse.error.flatten() });
+
+  const { experienceLevel, primaryStack, country, company } = parse.data;
+  // COALESCE keeps previously answered questions when the client sends a partial survey
+  db.prepare(
+    `UPDATE users SET experience_level = COALESCE(?, experience_level),
+                      primary_stack    = COALESCE(?, primary_stack),
+                      country          = COALESCE(?, country),
+                      company          = COALESCE(?, company),
+                      profile_done_at  = unixepoch()
+     WHERE id = ?`
+  ).run(experienceLevel ?? null, primaryStack ?? null, country?.trim() || null, company?.trim() || null, req.userId);
+
+  console.log(`[profile] user=${req.userId} level=${experienceLevel || "-"} stack=${primaryStack || "-"} company=${company || "-"}`);
+  res.json({ ok: true });
+});
+
+// GET /v1/me/analytics  — per-user earnings breakdown for the web dashboard
+app.get("/v1/me/analytics", requireAuth, (req, res) => {
+  const totals = db.prepare(
+    `SELECT COALESCE(SUM(payout_paise), 0) AS total_paise, COUNT(*) AS impression_count, MIN(ts) AS first_ts
+     FROM impressions WHERE user_id = ?`
+  ).get(req.userId);
+  const clickCount = db.prepare("SELECT COUNT(*) AS n FROM clicks WHERE user_id = ?").get(req.userId).n;
+  const withdrawn = db.prepare(
+    `SELECT COALESCE(SUM(amount_paise), 0) AS total_paise
+     FROM withdrawals WHERE user_id = ? AND status IN ('pending', 'completed')`
+  ).get(req.userId).total_paise;
+
+  const daily = db.prepare(
+    `SELECT date(ts, 'unixepoch') AS day,
+            COALESCE(SUM(payout_paise), 0) AS paise,
+            COUNT(*) AS impressions
+     FROM impressions
+     WHERE user_id = ? AND ts > unixepoch() - 30 * 86400
+     GROUP BY day ORDER BY day`
+  ).all(req.userId);
+
+  const byTaskType = db.prepare(
+    `SELECT task_type, COUNT(*) AS n, COALESCE(SUM(payout_paise), 0) AS paise
+     FROM impressions WHERE user_id = ? AND task_type IS NOT NULL
+     GROUP BY task_type ORDER BY n DESC`
+  ).all(req.userId);
+
+  const bySponsor = db.prepare(
+    `SELECT i.sponsor_id, COALESCE(s.name, i.sponsor_id) AS name,
+            COUNT(*) AS n, COALESCE(SUM(i.payout_paise), 0) AS paise
+     FROM impressions i LEFT JOIN sponsors s ON s.id = i.sponsor_id
+     WHERE i.user_id = ? GROUP BY i.sponsor_id ORDER BY paise DESC`
+  ).all(req.userId);
+
+  // Rank among earning devs; a dev with nothing yet counts as one extra entrant
+  const earners = db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM impressions").get().n;
+  const ahead = db.prepare(
+    `SELECT COUNT(*) AS n FROM (
+       SELECT user_id FROM impressions GROUP BY user_id HAVING SUM(payout_paise) > ?
+     )`
+  ).get(totals.total_paise).n;
+
+  res.json({
+    totalPaise: totals.total_paise,
+    impressionCount: totals.impression_count,
+    clickCount,
+    availablePaise: totals.total_paise - withdrawn,
+    withdrawnPaise: withdrawn,
+    daily,
+    byTaskType,
+    bySponsor,
+    firstEarnedAt: totals.first_ts,
+    rank: { position: ahead + 1, outOf: earners + (totals.impression_count ? 0 : 1) },
+  });
+});
+
+// Keeps a preference filter from emptying the auction pool — narrows only if something matches
+function prefer(pool, fn) {
+  const narrowed = pool.filter(fn);
+  return narrowed.length ? narrowed : pool;
+}
+
 // GET /v1/sponsor-line  — fetch current ad using highest-bidder auction (authenticated)
 app.get("/v1/sponsor-line", requireAuth, (req, res) => {
   const taskType = req.query.taskType || null;
+  const idle = req.query.idle === "1" || req.query.idle === "true";
+
+  // Company/university name is mandatory — no ad (no earnings) until it's filled in.
+  // Reuses the existing "no sponsor available" contract; the client already
+  // treats a null response as "nothing to show", so no client changes needed.
+  const { company } = db.prepare("SELECT company FROM users WHERE id = ?").get(req.userId) || {};
+  if (!company) return res.json(null);
 
   const allSponsors = db.prepare("SELECT * FROM sponsors WHERE active = 1").all();
   if (allSponsors.length === 0) return res.json(null);
@@ -158,31 +268,51 @@ app.get("/v1/sponsor-line", requireAuth, (req, res) => {
      FROM impressions
      WHERE sponsor_id = ? AND ts > unixepoch('now', 'start of day')`
   );
+  const totalSpendStmt = db.prepare(
+    `SELECT COALESCE(SUM(payout_paise), 0) AS spend
+     FROM impressions
+     WHERE sponsor_id = ?`
+  );
 
-  // Filter out sponsors that have exceeded their daily budget
-  const eligible = allSponsors.filter(s => {
-    if (s.budget_paise_daily == null) return true; // unlimited
-    const { spend } = todaySpendStmt.get(s.id);
-    return spend < s.budget_paise_daily;
+  // Filter out sponsors that have exceeded their daily or lifetime budget
+  let eligible = allSponsors.filter(s => {
+    if (s.budget_paise_daily != null && todaySpendStmt.get(s.id).spend >= s.budget_paise_daily) return false;
+    if (s.budget_paise_total != null && totalSpendStmt.get(s.id).spend >= s.budget_paise_total) return false;
+    return true;
   });
 
   if (eligible.length === 0) return res.json(null);
 
-  // Pick highest bidder; break ties randomly
-  const maxBid = Math.max(...eligible.map(s => s.bid_paise));
-  const topTier = eligible.filter(s => s.bid_paise === maxBid);
-  const sponsor = topTier[Math.floor(Math.random() * topTier.length)];
+  // Slot targeting — legacy rows have slot_type NULL, which means "any slot"
+  const slotOf = s => s.slot_type || "all";
+  eligible = idle
+    ? prefer(eligible, s => slotOf(s) === "idle" || slotOf(s) === "all")
+    : prefer(eligible, s => slotOf(s) === "all" || (taskType && slotOf(s) === taskType));
+
+  // Stack targeting — CSV of stacks/task types; untargeted sponsors stay in as fallback
+  const wants = [db.prepare("SELECT primary_stack FROM users WHERE id = ?").get(req.userId)?.primary_stack, taskType]
+    .filter(Boolean).map(s => String(s).toLowerCase());
+  if (wants.length) {
+    eligible = prefer(eligible, s => (s.target_stack || "").split(",").some(t => wants.includes(t.trim().toLowerCase())));
+  }
+
+  // Bid-weighted lottery — higher bidders win more often, but not every user
+  // converges on the single top bidder (different ads for different users).
+  const totalBid = eligible.reduce((sum, s) => sum + s.bid_paise, 0);
+  let r = Math.random() * totalBid;
+  const sponsor = eligible.find(s => (r -= s.bid_paise) < 0) ?? eligible[eligible.length - 1];
 
   // Serve the stored payout so what the user sees matches what /v1/impressions credits
   const payoutPaise = sponsor.payout_paise;
 
-  console.log(`[sponsor-line] served "${sponsor.id}" (bid=${sponsor.bid_paise}p payout=${payoutPaise}p) to ${req.userId} task_type=${taskType}`);
+  console.log(`[sponsor-line] served "${sponsor.id}" (bid=${sponsor.bid_paise}p payout=${payoutPaise}p) to ${req.userId} task_type=${taskType} idle=${idle}`);
   res.json({
     id: sponsor.id,
     text: sponsor.text,
     advertiser: sponsor.name,
     url: sponsor.url,
     payoutPaise,
+    logoUrl: sponsor.logo_url || null,
   });
 });
 
@@ -417,6 +547,16 @@ app.get("/v1/public/stats", (req, res) => {
     `SELECT task_type, COUNT(*) as n FROM impressions
      WHERE task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC LIMIT 5`
   ).all();
+  const totalClicks = db.prepare("SELECT COUNT(*) as n FROM clicks").get().n;
+  const paidLast7d = db.prepare(
+    "SELECT COALESCE(SUM(payout_paise), 0) AS paise FROM impressions WHERE ts > unixepoch() - 7 * 86400"
+  ).get().paise;
+  // "Active dev" here = any dev who has ever earned, so the average doesn't swing on a quiet day
+  const earningDevs = db.prepare("SELECT COUNT(DISTINCT user_id) as n FROM impressions").get().n;
+  const dailyImpressions = db.prepare(
+    `SELECT date(ts, 'unixepoch') AS day, COUNT(*) AS n FROM impressions
+     WHERE ts > unixepoch() - 14 * 86400 GROUP BY day ORDER BY day`
+  ).all();
 
   res.json({
     totalImpressions,
@@ -425,6 +565,10 @@ app.get("/v1/public/stats", (req, res) => {
     totalDevs,
     totalSignups,
     topTaskTypes,
+    totalClicks,
+    avgPerActiveDevRupees: (earningDevs ? totalPaid / earningDevs / 100 : 0).toFixed(2),
+    paidLast7dRupees: (paidLast7d / 100).toFixed(2),
+    dailyImpressions,
     lastUpdated: new Date().toISOString(),
   });
 });
@@ -533,15 +677,15 @@ app.post("/v1/public/signup", async (req, res) => {
     email:   z.string().email(),
     role:    z.string().max(64).optional(),
     github:  z.string().max(64).optional().nullable(),
-    company: z.string().max(120).optional().nullable(),
+    company: z.string().min(1).max(120),
   }).safeParse(req.body);
 
   if (!parse.success) return res.status(400).json({ error: "invalid_body" });
 
   const { name, email, role, github, company } = parse.data;
   const normalizedEmail = email.toLowerCase().trim();
-  // role/github/company logged for manual review; not stored in DB yet
-  console.log(`[signup] meta role=${role || "-"} github=${github || "-"} company=${company || "-"}`);
+  // role/github logged for manual review; not stored in DB. company is required and persisted below.
+  console.log(`[signup] meta role=${role || "-"} github=${github || "-"} company=${company}`);
 
   // Check if already signed up
   const existing = db.prepare("SELECT code FROM beta_invites WHERE email = ?").get(normalizedEmail);
@@ -564,7 +708,7 @@ app.post("/v1/public/signup", async (req, res) => {
   const code = generateInviteCode();
 
   try {
-    db.prepare("INSERT INTO beta_invites (code, email) VALUES (?, ?)").run(code, normalizedEmail);
+    db.prepare("INSERT INTO beta_invites (code, email, company) VALUES (?, ?, ?)").run(code, normalizedEmail, company.trim());
   } catch (e) {
     console.error("[signup] db error:", e.message);
     return res.status(500).json({ error: "signup_failed" });
@@ -599,9 +743,9 @@ app.post("/v1/public/advertiser-inquiry", async (req, res) => {
     company:         z.string().min(1).max(120),
     contact_name:    z.string().min(1).max(120),
     email:           z.string().email(),
-    website:         z.string().url().optional().or(z.literal("")),
+    website:         httpUrl.optional().or(z.literal("")),
     ad_text:         z.string().min(5).max(160),
-    destination_url: z.string().url(),
+    destination_url: httpUrl,
     budget_range:    z.enum(["500-1000", "1000-5000", "5000-20000", "20000+"]),
     slot_type:       z.enum(["build", "test", "install", "all"]),
     product_type:    z.string().max(64).optional(),
@@ -689,6 +833,11 @@ app.get("/api/sponsors", (req, res) => {
      FROM impressions
      WHERE sponsor_id = ? AND ts > unixepoch('now', 'start of day')`
   );
+  const totalSpendStmt = db.prepare(
+    `SELECT COALESCE(SUM(payout_paise), 0) AS spend
+     FROM impressions
+     WHERE sponsor_id = ?`
+  );
 
   res.json(sponsors.map(s => ({
     ...s,
@@ -697,28 +846,40 @@ app.get("/api/sponsors", (req, res) => {
     ctr: impressionCounts[s.id]
       ? ((clickCounts[s.id] || 0) / impressionCounts[s.id] * 100).toFixed(1) : "0.0",
     daily_spend_paise: dailySpendStmt.get(s.id).spend,
+    total_spend_paise: totalSpendStmt.get(s.id).spend,
   })));
 });
+
+// Shared targeting fields for POST/PUT /api/sponsors. Empty string = "cleared".
+const SLOT_TYPES = ["build", "test", "install", "idle", "all"];
+const targetingFields = {
+  logo_url:     httpUrl.nullable().optional().or(z.literal("")),
+  slot_type:    z.enum(SLOT_TYPES).optional(),
+  target_stack: z.string().max(200).nullable().optional(),
+};
+const targetingValues = d => [d.logo_url || null, d.slot_type || "all", d.target_stack?.trim() || null];
 
 app.post("/api/sponsors", (req, res) => {
   const parse = z.object({
     name: z.string().min(1),
     text: z.string().min(1),
-    url: z.string().url(),
+    url: httpUrl,
     payout_paise: z.number().int().min(1).optional(),
     bid_paise: z.number().int().min(1).optional().default(42),
     budget_paise_daily: z.number().int().min(100).nullable().optional(),
+    budget_paise_total: z.number().int().min(100).nullable().optional(),
     active: z.union([z.boolean(), z.enum(["true", "false"])]).optional(),
+    ...targetingFields,
   }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "invalid body", details: parse.error.flatten() });
 
-  const { name, text, url, bid_paise, budget_paise_daily, active } = parse.data;
+  const { name, text, url, bid_paise, budget_paise_daily, budget_paise_total, active } = parse.data;
   const payout_paise = Math.round(bid_paise * 0.6);
   const activeVal = active === "false" || active === false ? 0 : 1;
   const id = "sponsor-" + randomUUID().slice(0, 8);
   db.prepare(
-    "INSERT INTO sponsors (id, name, text, url, payout_paise, bid_paise, budget_paise_daily, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-  ).run(id, name.trim(), text.trim(), url.trim(), payout_paise, bid_paise, budget_paise_daily ?? null, activeVal);
+    "INSERT INTO sponsors (id, name, text, url, payout_paise, bid_paise, budget_paise_daily, budget_paise_total, active, logo_url, slot_type, target_stack) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+  ).run(id, name.trim(), text.trim(), url.trim(), payout_paise, bid_paise, budget_paise_daily ?? null, budget_paise_total ?? null, activeVal, ...targetingValues(parse.data));
   res.json({ ok: true, id });
 });
 
@@ -726,19 +887,21 @@ app.put("/api/sponsors/:id", (req, res) => {
   const parse = z.object({
     name: z.string().min(1),
     text: z.string().min(1),
-    url: z.string().url(),
+    url: httpUrl,
     bid_paise: z.number().int().min(1).optional().default(42),
     budget_paise_daily: z.number().int().min(100).nullable().optional(),
+    budget_paise_total: z.number().int().min(100).nullable().optional(),
     active: z.union([z.boolean(), z.number().int()]).optional(),
+    ...targetingFields,
   }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "invalid body", details: parse.error.flatten() });
 
-  const { name, text, url, bid_paise, budget_paise_daily, active } = parse.data;
+  const { name, text, url, bid_paise, budget_paise_daily, budget_paise_total, active } = parse.data;
   const payout_paise = Math.round(bid_paise * 0.6);
   const activeVal = active ? 1 : 0;
   db.prepare(
-    "UPDATE sponsors SET name=?, text=?, url=?, payout_paise=?, bid_paise=?, budget_paise_daily=?, active=? WHERE id=?"
-  ).run(name.trim(), text.trim(), url.trim(), payout_paise, bid_paise, budget_paise_daily ?? null, activeVal, req.params.id);
+    "UPDATE sponsors SET name=?, text=?, url=?, payout_paise=?, bid_paise=?, budget_paise_daily=?, budget_paise_total=?, active=?, logo_url=?, slot_type=?, target_stack=? WHERE id=?"
+  ).run(name.trim(), text.trim(), url.trim(), payout_paise, bid_paise, budget_paise_daily ?? null, budget_paise_total ?? null, activeVal, ...targetingValues(parse.data), req.params.id);
   res.json({ ok: true });
 });
 
@@ -843,6 +1006,38 @@ app.get("/api/advertiser-inquiries", (req, res) => {
   res.json(rows);
 });
 
+app.put("/api/advertiser-inquiries/:id", (req, res) => {
+  const parse = z.object({
+    status: z.enum(["new", "contacted", "won", "rejected"]),
+    notes:  z.string().max(1000).optional(),
+  }).safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: "invalid body", details: parse.error.flatten() });
+
+  db.prepare("UPDATE advertiser_inquiries SET status = ?, notes = COALESCE(?, notes) WHERE id = ?")
+    .run(parse.data.status, parse.data.notes ?? null, req.params.id);
+  res.json({ ok: true });
+});
+
+// Monthly budget → what we're willing to bid per impression. Rough tiers, tune in admin after.
+const BID_BY_BUDGET = { "500-1000": 42, "1000-5000": 60, "5000-20000": 90, "20000+": 150 };
+
+app.post("/api/advertiser-inquiries/:id/convert", (req, res) => {
+  const inq = db.prepare("SELECT * FROM advertiser_inquiries WHERE id = ?").get(req.params.id);
+  if (!inq) return res.status(404).json({ error: "inquiry_not_found" });
+
+  const bid_paise = BID_BY_BUDGET[inq.budget_range] || 42;
+  const sponsorId = "sponsor-" + randomUUID().slice(0, 8);
+  db.transaction(() => {
+    db.prepare(
+      "INSERT INTO sponsors (id, name, text, url, payout_paise, bid_paise, slot_type) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(sponsorId, inq.company, inq.ad_text, inq.destination_url, Math.round(bid_paise * 0.6), bid_paise, inq.slot_type || "all");
+    db.prepare("UPDATE advertiser_inquiries SET status = 'won' WHERE id = ?").run(inq.id);
+  })();
+
+  console.log(`[inquiry-convert] inquiry=${inq.id} → sponsor=${sponsorId} bid=${bid_paise}p`);
+  res.json({ ok: true, sponsorId });
+});
+
 app.get("/admin", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -853,9 +1048,14 @@ function generateInviteCode() {
   return `DCUT-${seg()}-${seg()}-${seg().slice(0, 2)}`;
 }
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`\nDevCut backend running at http://localhost:${PORT}`);
-  console.log(`Admin dashboard: http://localhost:${PORT}/admin`);
-  console.log(`Public stats:    http://localhost:${PORT}/v1/public/stats\n`);
-});
+// Only listen when started directly — `require`ing this file (tests) just gets the app
+if (require.main === module) {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    console.log(`\nDevCut backend running at http://localhost:${PORT}`);
+    console.log(`Admin dashboard: http://localhost:${PORT}/admin`);
+    console.log(`Public stats:    http://localhost:${PORT}/v1/public/stats\n`);
+  });
+}
+
+module.exports = app;

@@ -6,6 +6,8 @@ export interface SponsorLine {
   text: string;
   advertiser?: string;
   url?: string;
+  /** Advertiser logo. Remote URL — the status bar cannot render it; the earnings webview can. */
+  logoUrl?: string | null;
   /** What this impression pays the developer, in paise (1/100 rupee). */
   payoutPaise?: number;
 }
@@ -76,8 +78,12 @@ export class SponsorClient {
     return this.refreshInFlight;
   }
 
-  async fetchCurrentLine(taskType?: string): Promise<SponsorLine | undefined> {
-    const qs = taskType ? `?taskType=${encodeURIComponent(taskType)}` : "";
+  /** `idle` asks the server for the lower-paying idle inventory. */
+  async fetchCurrentLine(taskType?: string, idle?: boolean): Promise<SponsorLine | undefined> {
+    const params = new URLSearchParams();
+    if (taskType) params.set("taskType", taskType);
+    if (idle) params.set("idle", "1");
+    const qs = params.toString() ? `?${params.toString()}` : "";
     try {
       const data = await this.request("GET", `/v1/sponsor-line${qs}`);
       if (!data) return undefined;
@@ -151,6 +157,20 @@ export class SponsorClient {
       return JSON.parse(data);
     } catch {
       return undefined;
+    }
+  }
+
+  /** One-time onboarding survey answers. All fields optional — send only what was answered. */
+  async saveProfile(p: { experienceLevel?: string; primaryStack?: string; country?: string; company?: string }): Promise<boolean> {
+    const body: Record<string, unknown> = {};
+    if (p.experienceLevel) body.experienceLevel = p.experienceLevel;
+    if (p.primaryStack) body.primaryStack = p.primaryStack;
+    if (p.country) body.country = p.country;
+    if (p.company) body.company = p.company;
+    try {
+      return !!(await this.request("POST", "/v1/me/profile", body));
+    } catch {
+      return false;
     }
   }
 
