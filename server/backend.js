@@ -535,9 +535,15 @@ app.get("/v1/teams/me", requireAuth, (req, res) => {
 // GET /v1/public/stats  — shareable dashboard numbers (no auth, aggregate only)
 app.get("/v1/public/stats", (req, res) => {
   const totalImpressions = db.prepare("SELECT COUNT(*) as n FROM impressions").get().n;
-  const totalPaid = db.prepare(
+  // Accrued earnings (what devs have racked up) — used for the per-dev average
+  // and the 7-day pace below, not for "paid out" (that's actual withdrawals).
+  const totalEarned = db.prepare(
     "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions"
   ).get().total_paise;
+  // Money that has actually left the building — completed withdrawals only.
+  const totalPaidOut = db.prepare(
+    "SELECT COALESCE(SUM(amount_paise), 0) AS paise FROM withdrawals WHERE status = 'completed'"
+  ).get().paise;
   const activeDevs = db.prepare(
     "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE ts > unixepoch() - 86400"
   ).get().n;
@@ -560,13 +566,13 @@ app.get("/v1/public/stats", (req, res) => {
 
   res.json({
     totalImpressions,
-    totalPaidRupees: (totalPaid / 100).toFixed(2),
+    totalPaidRupees: (totalPaidOut / 100).toFixed(2),
     activeDevsToday: activeDevs,
     totalDevs,
     totalSignups,
     topTaskTypes,
     totalClicks,
-    avgPerActiveDevRupees: (earningDevs ? totalPaid / earningDevs / 100 : 0).toFixed(2),
+    avgPerActiveDevRupees: (earningDevs ? totalEarned / earningDevs / 100 : 0).toFixed(2),
     paidLast7dRupees: (paidLast7d / 100).toFixed(2),
     dailyImpressions,
     lastUpdated: new Date().toISOString(),
@@ -917,8 +923,9 @@ app.get("/api/overview", (req, res) => {
   const activeSponsors = db.prepare("SELECT COUNT(*) as n FROM sponsors WHERE active=1").get().n;
   const totalUsers = db.prepare("SELECT COUNT(*) as n FROM users").get().n;
   const pendingWithdrawals = db.prepare("SELECT COUNT(*) as n, COALESCE(SUM(amount_paise),0) as total FROM withdrawals WHERE status='pending'").get();
+  // Money actually paid out — completed withdrawals only (not accrued/unwithdrawn earnings).
   const totalPaid = db.prepare(
-    "SELECT COALESCE(SUM(payout_paise), 0) AS paise FROM impressions"
+    "SELECT COALESCE(SUM(amount_paise), 0) AS paise FROM withdrawals WHERE status = 'completed'"
   ).get().paise;
   const taskTypeBreakdown = db.prepare(
     "SELECT task_type, COUNT(*) as n FROM impressions WHERE task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC"
