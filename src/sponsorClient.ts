@@ -10,6 +10,8 @@ export interface SponsorLine {
   logoUrl?: string | null;
   /** What this impression pays the developer, in paise (1/100 rupee). */
   payoutPaise?: number;
+  /** Short-lived (90s) signed JWT — required to record the impression. */
+  impressionToken?: string;
 }
 
 export interface EarningsSummary {
@@ -94,9 +96,9 @@ export class SponsorClient {
   }
 
   /** Returns true only if the server accepted (and will pay for) the impression. */
-  async recordImpression(lineId: string, taskType?: string): Promise<boolean> {
+  async recordImpression(token: string, taskType?: string): Promise<boolean> {
     try {
-      const data = await this.request("POST", "/v1/impressions", { lineId, taskType });
+      const data = await this.request("POST", "/v1/impressions", { token, taskType });
       return !!data;
     } catch {
       return false; // rejected (rate-limited) or unreachable — don't credit locally

@@ -3,7 +3,7 @@ const path = require("path");
 const { randomUUID, randomInt } = require("crypto");
 const { z } = require("zod");
 const db = require("./db");
-const { signAccessToken, getPublicJwk } = require("./auth");
+const { signAccessToken, getPublicJwk, signImpressionToken, verifyImpressionToken } = require("./auth");
 const { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit, authRateLimit } = require("./middleware");
 const { Resend } = require("resend");
 
@@ -27,18 +27,37 @@ const httpUrl = z.string().url().refine(
   { message: "url must be http(s)" }
 );
 
+// Dev's share of each advertiser bid — payout_paise is always derived from this, never client-set
+const PAYOUT_SHARE = 0.6;
+
+// Canonical email for dedupe: lowercase, strip +tag from the local part; gmail ignores dots too
+function canonicalEmail(email) {
+  const [local = "", domain = ""] = String(email).toLowerCase().trim().split("@");
+  let l = local.split("+")[0];
+  if (domain === "gmail.com" || domain === "googlemail.com") l = l.replace(/\./g, "");
+  return `${l}@${domain}`;
+}
+// Backfill canonical emails for invites created before the column existed
+{
+  const upd = db.prepare("UPDATE beta_invites SET email_canonical = ? WHERE code = ?");
+  for (const r of db.prepare("SELECT code, email FROM beta_invites WHERE email_canonical IS NULL").all()) {
+    upd.run(canonicalEmail(r.email), r.code);
+  }
+}
+
 const app = express();
 // Behind Railway's proxy — makes req.ip the real client IP so rate limits key correctly
 app.set("trust proxy", 1);
 
-// CORS — allow landing page and any browser client to reach public endpoints
-app.use((req, res, next) => {
+// CORS — /v1 only (landing page + browser clients). The admin /api stays
+// same-origin so browsers can't be scripted into it cross-site.
+const corsMw = (req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-admin-key");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
-});
+};
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -47,7 +66,7 @@ app.use("/site", express.static(path.join(__dirname, "..", "landing")));
 
 // ─── Public extension API (/v1/) ──────────────────────────────────────────────
 
-app.use("/v1", globalRateLimit);
+app.use("/v1", corsMw, globalRateLimit);
 
 // GET /v1/jwks  — public key for client-side token verification
 app.get("/v1/jwks", (req, res) => {
@@ -96,7 +115,7 @@ app.post("/v1/login", authRateLimit, (req, res) => {
   if (!invite) return res.status(403).json({ error: "invalid_code" });
 
   const user = db.prepare("SELECT status FROM users WHERE id = ?").get(invite.used_by_user_id);
-  if (!user || user.status === "revoked") return res.status(403).json({ error: "account_revoked" });
+  if (!user || user.status !== "active") return res.status(403).json({ error: "account_revoked" });
 
   const refreshToken = randomUUID();
   db.prepare("INSERT INTO refresh_tokens (id, user_id) VALUES (?, ?)").run(refreshToken, invite.used_by_user_id);
@@ -125,12 +144,25 @@ app.post("/v1/token/refresh", authRateLimit, (req, res) => {
   if (!parse.success) return res.status(400).json({ error: "refreshToken required" });
 
   const record = db.prepare(
-    "SELECT user_id FROM refresh_tokens WHERE id = ? AND revoked_at IS NULL"
+    "SELECT user_id, revoked_at, created_at FROM refresh_tokens WHERE id = ?"
   ).get(parse.data.refreshToken);
   if (!record) return res.status(401).json({ error: "invalid_refresh_token" });
 
+  // A rotated token coming back = theft signal — nuke the whole session family.
+  if (record.revoked_at != null) {
+    db.prepare("UPDATE refresh_tokens SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL")
+      .run(record.user_id);
+    console.warn(`[token-refresh] REUSE DETECTED user=${record.user_id} — all refresh tokens revoked`);
+    return res.status(401).json({ error: "refresh_reuse_detected" });
+  }
+
+  // Refresh tokens live 30 days from issue; after that, log in again.
+  if (record.created_at < Math.floor(Date.now() / 1000) - 30 * 86400) {
+    return res.status(401).json({ error: "refresh_expired" });
+  }
+
   const user = db.prepare("SELECT status FROM users WHERE id = ?").get(record.user_id);
-  if (!user || user.status === "revoked") return res.status(403).json({ error: "account_revoked" });
+  if (!user || user.status !== "active") return res.status(403).json({ error: "account_revoked" });
 
   // Rotate: revoke the used token, issue a brand new one.
   // If an attacker steals + uses a refresh token, the real user's next refresh fails — detectable.
@@ -154,11 +186,23 @@ app.delete("/v1/logout", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// PUT /v1/profile/upi  — set/update UPI ID
+// PUT /v1/profile/upi  — set/update UPI ID (starts a 24h withdrawal lock, see /v1/withdraw)
 app.put("/v1/profile/upi", requireAuth, (req, res) => {
-  const parse = z.object({ upiId: z.string().min(5).max(64) }).safeParse(req.body);
+  const parse = z.object({ upiId: z.string().regex(/^[\w.\-]{2,64}@[a-zA-Z]{2,32}$/) }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "invalid upiId" });
-  db.prepare("UPDATE users SET upi_id = ? WHERE id = ?").run(parse.data.upiId, req.userId);
+  db.prepare("UPDATE users SET upi_id = ?, upi_updated_at = unixepoch() WHERE id = ?").run(parse.data.upiId, req.userId);
+  res.json({ ok: true });
+});
+
+// DELETE /v1/me  — account deletion: anonymise PII, keep money rows for accounting
+app.delete("/v1/me", requireAuth, (req, res) => {
+  db.transaction(() => {
+    db.prepare("UPDATE users SET status = 'deleted', email = ?, upi_id = NULL, company = NULL, country = NULL WHERE id = ?")
+      .run(`deleted-${req.userId}@deleted.invalid`, req.userId);
+    db.prepare("UPDATE refresh_tokens SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL")
+      .run(req.userId);
+  })();
+  console.log(`[delete-me] user=${req.userId}`);
   res.json({ ok: true });
 });
 
@@ -249,6 +293,16 @@ function prefer(pool, fn) {
   return narrowed.length ? narrowed : pool;
 }
 
+// Per-sponsor spend in one GROUP BY (bid-denominated — budgets cap what advertisers pay,
+// not what devs are paid), instead of a query per sponsor.
+function spendBySponsor(todayOnly) {
+  return db.prepare(
+    `SELECT sponsor_id, COALESCE(SUM(bid_paise), 0) AS spend FROM impressions
+     ${todayOnly ? "WHERE ts > unixepoch('now', 'start of day')" : ""}
+     GROUP BY sponsor_id`
+  ).all().reduce((m, r) => (m[r.sponsor_id] = r.spend, m), {});
+}
+
 // GET /v1/sponsor-line  — fetch current ad using highest-bidder auction (authenticated)
 app.get("/v1/sponsor-line", requireAuth, (req, res) => {
   const taskType = req.query.taskType || null;
@@ -263,31 +317,30 @@ app.get("/v1/sponsor-line", requireAuth, (req, res) => {
   const allSponsors = db.prepare("SELECT * FROM sponsors WHERE active = 1").all();
   if (allSponsors.length === 0) return res.json(null);
 
-  const todaySpendStmt = db.prepare(
-    `SELECT COALESCE(SUM(payout_paise), 0) AS spend
-     FROM impressions
-     WHERE sponsor_id = ? AND ts > unixepoch('now', 'start of day')`
-  );
-  const totalSpendStmt = db.prepare(
-    `SELECT COALESCE(SUM(payout_paise), 0) AS spend
-     FROM impressions
-     WHERE sponsor_id = ?`
-  );
+  const todaySpend = spendBySponsor(true);
+  const totalSpend = spendBySponsor(false);
 
   // Filter out sponsors that have exceeded their daily or lifetime budget
   let eligible = allSponsors.filter(s => {
-    if (s.budget_paise_daily != null && todaySpendStmt.get(s.id).spend >= s.budget_paise_daily) return false;
-    if (s.budget_paise_total != null && totalSpendStmt.get(s.id).spend >= s.budget_paise_total) return false;
+    if (s.budget_paise_daily != null && (todaySpend[s.id] || 0) >= s.budget_paise_daily) return false;
+    if (s.budget_paise_total != null && (totalSpend[s.id] || 0) >= s.budget_paise_total) return false;
     return true;
   });
 
   if (eligible.length === 0) return res.json(null);
 
-  // Slot targeting — legacy rows have slot_type NULL, which means "any slot"
-  const slotOf = s => s.slot_type || "all";
-  eligible = idle
-    ? prefer(eligible, s => slotOf(s) === "idle" || slotOf(s) === "all")
-    : prefer(eligible, s => slotOf(s) === "all" || (taskType && slotOf(s) === taskType));
+  // Strict slot filter — legacy rows have slot_type NULL, which means "any slot".
+  // ponytail: coarse slot mapping — any non-idle tracked task satisfies 'build'/'install',
+  // 'test' needs "test" in taskType; a real taskType→slot map is the upgrade path.
+  eligible = eligible.filter(s => {
+    const slot = s.slot_type || "all";
+    if (slot === "all") return true;
+    if (slot === "idle") return idle;
+    if (idle || !taskType) return false; // build/test/install require an active tracked task
+    return slot === "test" ? String(taskType).toLowerCase().includes("test") : true;
+  });
+
+  if (eligible.length === 0) return res.json(null);
 
   // Stack targeting — CSV of stacks/task types; untargeted sponsors stay in as fallback
   const wants = [db.prepare("SELECT primary_stack FROM users WHERE id = ?").get(req.userId)?.primary_stack, taskType]
@@ -302,8 +355,12 @@ app.get("/v1/sponsor-line", requireAuth, (req, res) => {
   let r = Math.random() * totalBid;
   const sponsor = eligible.find(s => (r -= s.bid_paise) < 0) ?? eligible[eligible.length - 1];
 
-  // Serve the stored payout so what the user sees matches what /v1/impressions credits
-  const payoutPaise = sponsor.payout_paise;
+  // Idle slots pay half. The impression token pins the served payout + bid, so what
+  // /v1/impressions credits always matches what the user was shown.
+  const payoutPaise = idle ? Math.round(sponsor.payout_paise * IDLE_PAYOUT_MULT) : sponsor.payout_paise;
+  const impressionToken = signImpressionToken({
+    sponsorId: sponsor.id, userId: req.userId, payoutPaise, bidPaise: sponsor.bid_paise,
+  });
 
   console.log(`[sponsor-line] served "${sponsor.id}" (bid=${sponsor.bid_paise}p payout=${payoutPaise}p) to ${req.userId} task_type=${taskType} idle=${idle}`);
   res.json({
@@ -313,26 +370,62 @@ app.get("/v1/sponsor-line", requireAuth, (req, res) => {
     url: sponsor.url,
     payoutPaise,
     logoUrl: sponsor.logo_url || null,
+    impressionToken,
   });
 });
 
-// POST /v1/impressions
+// POST /v1/impressions — credit an impression using the signed token from /v1/sponsor-line
 app.post("/v1/impressions", requireAuth, rateLimitImpressions, (req, res) => {
   const parse = z.object({
-    lineId: z.string().regex(/^sponsor-[a-z0-9-]+$/),
+    token: z.string(),
     taskType: z.string().max(32).optional(),
   }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "invalid body" });
 
-  const { lineId, taskType } = parse.data;
-  const sponsor = db.prepare("SELECT id, payout_paise FROM sponsors WHERE id = ? AND active = 1").get(lineId);
+  let claims;
+  try {
+    claims = verifyImpressionToken(parse.data.token);
+  } catch (_) {
+    return res.status(400).json({ error: "invalid_impression_token" });
+  }
+  if (claims.sub !== req.userId) return res.status(403).json({ error: "token_user_mismatch" });
+
+  const sponsor = db.prepare("SELECT * FROM sponsors WHERE id = ? AND active = 1").get(claims.spn);
   if (!sponsor) return res.status(400).json({ error: "unknown_sponsor" });
 
   const ip = req.ip || req.headers["x-forwarded-for"] || null;
-  db.prepare("INSERT INTO impressions (user_id, sponsor_id, task_type, ip, payout_paise) VALUES (?, ?, ?, ?, ?)")
-    .run(req.userId, lineId, taskType || null, ip, sponsor.payout_paise);
+  try {
+    // Budget re-check + insert are atomic — the serve-time eligibility check can race
+    const exhausted = db.transaction(() => {
+      // Replayed token → 409 even when the budget is also gone (unique index is the race backstop)
+      if (db.prepare("SELECT 1 FROM impressions WHERE jti = ?").get(claims.jti)) {
+        const err = new Error("duplicate jti");
+        err.code = "SQLITE_CONSTRAINT_UNIQUE";
+        throw err;
+      }
+      const today = db.prepare(
+        `SELECT COALESCE(SUM(bid_paise), 0) AS spend FROM impressions
+         WHERE sponsor_id = ? AND ts > unixepoch('now', 'start of day')`
+      ).get(sponsor.id).spend;
+      const total = db.prepare(
+        "SELECT COALESCE(SUM(bid_paise), 0) AS spend FROM impressions WHERE sponsor_id = ?"
+      ).get(sponsor.id).spend;
+      if ((sponsor.budget_paise_daily != null && today + sponsor.bid_paise > sponsor.budget_paise_daily) ||
+          (sponsor.budget_paise_total != null && total + sponsor.bid_paise > sponsor.budget_paise_total)) {
+        return true;
+      }
+      db.prepare("INSERT INTO impressions (user_id, sponsor_id, task_type, ip, payout_paise, bid_paise, jti) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(req.userId, sponsor.id, parse.data.taskType || null, ip, claims.pay, claims.bid, claims.jti);
+      return false;
+    })();
+    if (exhausted) return res.status(410).json({ error: "budget_exhausted" });
+  } catch (e) {
+    // Unique jti index — the same token can only ever credit once
+    if (e.code === "SQLITE_CONSTRAINT_UNIQUE") return res.status(409).json({ error: "duplicate_impression" });
+    throw e;
+  }
 
-  console.log(`[impression] user=${req.userId} sponsor=${lineId} type=${taskType}`);
+  console.log(`[impression] user=${req.userId} sponsor=${sponsor.id} type=${parse.data.taskType}`);
   res.json({ ok: true });
 });
 
@@ -379,54 +472,65 @@ app.get("/v1/stats", (req, res) => {
 // ─── UPI Withdrawal ──────────────────────────────────────────────────────────
 
 const MIN_WITHDRAWAL_PAISE = 5000; // ₹50
+const IDLE_PAYOUT_MULT = 0.5;      // idle-slot impressions pay half (see /v1/sponsor-line)
+const PENDING_MSG = "A withdrawal is already being processed.";
 
 // POST /v1/withdraw  — request a UPI payout
 app.post("/v1/withdraw", requireAuth, (req, res) => {
-  const user = db.prepare("SELECT upi_id FROM users WHERE id = ?").get(req.userId);
+  const user = db.prepare("SELECT upi_id, upi_updated_at FROM users WHERE id = ?").get(req.userId);
   if (!user?.upi_id) {
     return res.status(400).json({ error: "upi_not_set", message: "Set your UPI ID first via the extension command." });
   }
 
-  // Calculate available balance (total earned - total withdrawn)
-  const earned = db.prepare(
-    "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions WHERE user_id = ?"
-  ).get(req.userId).total_paise;
-
-  const withdrawn = db.prepare(
-    `SELECT COALESCE(SUM(amount_paise), 0) AS total_paise
-     FROM withdrawals WHERE user_id = ? AND status IN ('pending', 'completed')`
-  ).get(req.userId).total_paise;
-
-  const available = earned - withdrawn;
-
-  if (available < MIN_WITHDRAWAL_PAISE) {
-    return res.status(400).json({
-      error: "insufficient_balance",
-      available,
-      minimum: MIN_WITHDRAWAL_PAISE,
-      message: `Need ₹${MIN_WITHDRAWAL_PAISE / 100} to withdraw. You have ₹${(available / 100).toFixed(2)}.`,
-    });
+  // 24h cool-off after any UPI change (including the first set) — blunts account-takeover → drain
+  if (user.upi_updated_at && user.upi_updated_at > Math.floor(Date.now() / 1000) - 86400) {
+    return res.status(400).json({ error: "upi_recently_changed", message: "UPI ID was changed recently. Withdrawals unlock 24h after a UPI change." });
   }
 
-  // Check no pending withdrawal already exists
-  const pending = db.prepare(
-    "SELECT id FROM withdrawals WHERE user_id = ? AND status = 'pending'"
-  ).get(req.userId);
-  if (pending) {
-    return res.status(400).json({ error: "withdrawal_pending", message: "A withdrawal is already being processed." });
+  // Balance check + insert are atomic; the partial unique index on pending
+  // withdrawals catches the race two concurrent requests would otherwise win.
+  let out;
+  try {
+    out = db.transaction(() => {
+      const earned = db.prepare(
+        "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions WHERE user_id = ?"
+      ).get(req.userId).total_paise;
+      const withdrawn = db.prepare(
+        `SELECT COALESCE(SUM(amount_paise), 0) AS total_paise
+         FROM withdrawals WHERE user_id = ? AND status IN ('pending', 'completed')`
+      ).get(req.userId).total_paise;
+      const available = earned - withdrawn;
+
+      if (available < MIN_WITHDRAWAL_PAISE) {
+        return { status: 400, body: {
+          error: "insufficient_balance",
+          available,
+          minimum: MIN_WITHDRAWAL_PAISE,
+          message: `Need ₹${MIN_WITHDRAWAL_PAISE / 100} to withdraw. You have ₹${(available / 100).toFixed(2)}.`,
+        } };
+      }
+
+      const pending = db.prepare(
+        "SELECT id FROM withdrawals WHERE user_id = ? AND status = 'pending'"
+      ).get(req.userId);
+      if (pending) return { status: 400, body: { error: "withdrawal_pending", message: PENDING_MSG } };
+
+      db.prepare("INSERT INTO withdrawals (user_id, amount_paise, upi_id) VALUES (?, ?, ?)")
+        .run(req.userId, available, user.upi_id);
+
+      console.log(`[withdraw] user=${req.userId} amount=₹${(available / 100).toFixed(2)} upi=${user.upi_id}`);
+      return { status: 200, body: {
+        ok: true,
+        amountPaise: available,
+        upiId: user.upi_id,
+        message: `Withdrawal of ₹${(available / 100).toFixed(2)} requested to ${user.upi_id}. Processed within 7 days.`,
+      } };
+    })();
+  } catch (e) {
+    if (e.code !== "SQLITE_CONSTRAINT_UNIQUE") throw e;
+    out = { status: 400, body: { error: "withdrawal_pending", message: PENDING_MSG } };
   }
-
-  db.prepare(
-    "INSERT INTO withdrawals (user_id, amount_paise, upi_id) VALUES (?, ?, ?)"
-  ).run(req.userId, available, user.upi_id);
-
-  console.log(`[withdraw] user=${req.userId} amount=₹${(available / 100).toFixed(2)} upi=${user.upi_id}`);
-  res.json({
-    ok: true,
-    amountPaise: available,
-    upiId: user.upi_id,
-    message: `Withdrawal of ₹${(available / 100).toFixed(2)} requested to ${user.upi_id}. Processed within 7 days.`,
-  });
+  res.status(out.status).json(out.body);
 });
 
 // GET /v1/withdraw/history  — payout history for authenticated user
@@ -684,17 +788,21 @@ app.post("/v1/public/signup", async (req, res) => {
     role:    z.string().max(64).optional(),
     github:  z.string().max(64).optional().nullable(),
     company: z.string().min(1).max(120),
+    source:  z.string().max(64).optional(),
   }).safeParse(req.body);
 
   if (!parse.success) return res.status(400).json({ error: "invalid_body" });
 
-  const { name, email, role, github, company } = parse.data;
+  const { name, email, role, github, company, source } = parse.data;
   const normalizedEmail = email.toLowerCase().trim();
-  // role/github logged for manual review; not stored in DB. company is required and persisted below.
-  console.log(`[signup] meta role=${role || "-"} github=${github || "-"} company=${company}`);
+  const canonical = canonicalEmail(email);
+  console.log(`[signup] meta role=${role || "-"} github=${github || "-"} company=${company} source=${source || "-"}`);
 
-  // Check if already signed up
-  const existing = db.prepare("SELECT code FROM beta_invites WHERE email = ?").get(normalizedEmail);
+  // Dedupe on canonical email (dev+tag@gmail.com == d.e.v@gmail.com); fall back
+  // to exact email for legacy rows that predate the canonical column.
+  const existing = db.prepare(
+    "SELECT code FROM beta_invites WHERE email_canonical = ? OR (email_canonical IS NULL AND email = ?)"
+  ).get(canonical, normalizedEmail);
   if (existing) {
     // Resend their code
     let email_sent = false;
@@ -714,7 +822,8 @@ app.post("/v1/public/signup", async (req, res) => {
   const code = generateInviteCode();
 
   try {
-    db.prepare("INSERT INTO beta_invites (code, email, company) VALUES (?, ?, ?)").run(code, normalizedEmail, company.trim());
+    db.prepare("INSERT INTO beta_invites (code, email, email_canonical, company, role, github, source) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .run(code, normalizedEmail, canonical, company.trim(), role || null, github || null, source || null);
   } catch (e) {
     console.error("[signup] db error:", e.message);
     return res.status(500).json({ error: "signup_failed" });
@@ -834,16 +943,8 @@ app.get("/api/sponsors", (req, res) => {
     .all().reduce((acc, r) => { acc[r.sponsor_id] = r.n; return acc; }, {});
   const clickCounts = db.prepare("SELECT sponsor_id, COUNT(*) as n FROM clicks GROUP BY sponsor_id")
     .all().reduce((acc, r) => { acc[r.sponsor_id] = r.n; return acc; }, {});
-  const dailySpendStmt = db.prepare(
-    `SELECT COALESCE(SUM(payout_paise), 0) AS spend
-     FROM impressions
-     WHERE sponsor_id = ? AND ts > unixepoch('now', 'start of day')`
-  );
-  const totalSpendStmt = db.prepare(
-    `SELECT COALESCE(SUM(payout_paise), 0) AS spend
-     FROM impressions
-     WHERE sponsor_id = ?`
-  );
+  const dailySpend = spendBySponsor(true);
+  const totalSpend = spendBySponsor(false);
 
   res.json(sponsors.map(s => ({
     ...s,
@@ -851,8 +952,8 @@ app.get("/api/sponsors", (req, res) => {
     clicks: clickCounts[s.id] || 0,
     ctr: impressionCounts[s.id]
       ? ((clickCounts[s.id] || 0) / impressionCounts[s.id] * 100).toFixed(1) : "0.0",
-    daily_spend_paise: dailySpendStmt.get(s.id).spend,
-    total_spend_paise: totalSpendStmt.get(s.id).spend,
+    daily_spend_paise: dailySpend[s.id] || 0,
+    total_spend_paise: totalSpend[s.id] || 0,
   })));
 });
 
@@ -870,7 +971,6 @@ app.post("/api/sponsors", (req, res) => {
     name: z.string().min(1),
     text: z.string().min(1),
     url: httpUrl,
-    payout_paise: z.number().int().min(1).optional(),
     bid_paise: z.number().int().min(1).optional().default(42),
     budget_paise_daily: z.number().int().min(100).nullable().optional(),
     budget_paise_total: z.number().int().min(100).nullable().optional(),
@@ -879,8 +979,9 @@ app.post("/api/sponsors", (req, res) => {
   }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "invalid body", details: parse.error.flatten() });
 
+  // payout_paise is never client-set — always derived from the bid
   const { name, text, url, bid_paise, budget_paise_daily, budget_paise_total, active } = parse.data;
-  const payout_paise = Math.round(bid_paise * 0.6);
+  const payout_paise = Math.round(bid_paise * PAYOUT_SHARE);
   const activeVal = active === "false" || active === false ? 0 : 1;
   const id = "sponsor-" + randomUUID().slice(0, 8);
   db.prepare(
@@ -889,12 +990,17 @@ app.post("/api/sponsors", (req, res) => {
   res.json({ ok: true, id });
 });
 
+// Partial update: absent field → keep DB value, explicit null → clear.
+// payout_paise is never accepted — always re-derived from the final bid.
 app.put("/api/sponsors/:id", (req, res) => {
+  const existing = db.prepare("SELECT * FROM sponsors WHERE id = ?").get(req.params.id);
+  if (!existing) return res.status(404).json({ error: "sponsor_not_found" });
+
   const parse = z.object({
-    name: z.string().min(1),
-    text: z.string().min(1),
-    url: httpUrl,
-    bid_paise: z.number().int().min(1).optional().default(42),
+    name: z.string().min(1).optional(),
+    text: z.string().min(1).optional(),
+    url: httpUrl.optional(),
+    bid_paise: z.number().int().min(1).optional(),
     budget_paise_daily: z.number().int().min(100).nullable().optional(),
     budget_paise_total: z.number().int().min(100).nullable().optional(),
     active: z.union([z.boolean(), z.number().int()]).optional(),
@@ -902,12 +1008,25 @@ app.put("/api/sponsors/:id", (req, res) => {
   }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "invalid body", details: parse.error.flatten() });
 
-  const { name, text, url, bid_paise, budget_paise_daily, budget_paise_total, active } = parse.data;
-  const payout_paise = Math.round(bid_paise * 0.6);
-  const activeVal = active ? 1 : 0;
+  const d = parse.data;
+  const keep = (v, cur) => v === undefined ? cur : v;
+  const bid_paise = keep(d.bid_paise, existing.bid_paise);
   db.prepare(
     "UPDATE sponsors SET name=?, text=?, url=?, payout_paise=?, bid_paise=?, budget_paise_daily=?, budget_paise_total=?, active=?, logo_url=?, slot_type=?, target_stack=? WHERE id=?"
-  ).run(name.trim(), text.trim(), url.trim(), payout_paise, bid_paise, budget_paise_daily ?? null, budget_paise_total ?? null, activeVal, ...targetingValues(parse.data), req.params.id);
+  ).run(
+    keep(d.name?.trim(), existing.name),
+    keep(d.text?.trim(), existing.text),
+    keep(d.url?.trim(), existing.url),
+    Math.round(bid_paise * PAYOUT_SHARE),
+    bid_paise,
+    keep(d.budget_paise_daily, existing.budget_paise_daily),
+    keep(d.budget_paise_total, existing.budget_paise_total),
+    d.active === undefined ? existing.active : (d.active ? 1 : 0),
+    d.logo_url === undefined ? existing.logo_url : (d.logo_url || null),
+    keep(d.slot_type, existing.slot_type),
+    d.target_stack === undefined ? existing.target_stack : (d.target_stack?.trim() || null),
+    req.params.id
+  );
   res.json({ ok: true });
 });
 
@@ -963,7 +1082,8 @@ app.post("/api/invites", (req, res) => {
   const parse = z.object({ email: z.string().email(), code: z.string().min(8).optional() }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "valid email required" });
   const code = (parse.data.code || generateInviteCode()).toUpperCase().trim();
-  db.prepare("INSERT OR IGNORE INTO beta_invites (code, email) VALUES (?, ?)").run(code, parse.data.email);
+  db.prepare("INSERT OR IGNORE INTO beta_invites (code, email, email_canonical) VALUES (?, ?, ?)")
+    .run(code, parse.data.email, canonicalEmail(parse.data.email));
   res.json({ ok: true, code });
 });
 
@@ -1037,7 +1157,7 @@ app.post("/api/advertiser-inquiries/:id/convert", (req, res) => {
   db.transaction(() => {
     db.prepare(
       "INSERT INTO sponsors (id, name, text, url, payout_paise, bid_paise, slot_type) VALUES (?, ?, ?, ?, ?, ?, ?)"
-    ).run(sponsorId, inq.company, inq.ad_text, inq.destination_url, Math.round(bid_paise * 0.6), bid_paise, inq.slot_type || "all");
+    ).run(sponsorId, inq.company, inq.ad_text, inq.destination_url, Math.round(bid_paise * PAYOUT_SHARE), bid_paise, inq.slot_type || "all");
     db.prepare("UPDATE advertiser_inquiries SET status = 'won' WHERE id = ?").run(inq.id);
   })();
 

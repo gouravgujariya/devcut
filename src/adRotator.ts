@@ -70,15 +70,23 @@ export class AdRotator {
     if (this.stopped) return;
     try {
       const line = await this.client.fetchCurrentLine(this.taskType, this.idle);
-      if (!line || this.stopped) return;
+      if (!line || !line.impressionToken || this.stopped) {
+        this.bar.hide();
+        return;
+      }
+      // Paid-display invariant: record the impression BEFORE showing the ad.
+      // A rejected impression (429/budget exhausted/duplicate) pays nothing —
+      // showing it anyway would give the advertiser a free ad and the dev ₹0.
+      const accepted = await this.client.recordImpression(line.impressionToken, this.taskType);
+      if (!accepted || this.stopped) {
+        this.bar.hide();
+        return;
+      }
       this.currentLine = line;
       this.bar.text = `$(megaphone) ${line.text}`;
       this.bar.tooltip = `Sponsored — click to learn more. ${line.advertiser ?? ""}`;
       this.bar.show();
-      // Only credit the local tally when the server accepts the impression,
-      // so "Earned ₹X this build" never promises money the server won't pay.
-      const accepted = await this.client.recordImpression(line.id, this.taskType);
-      if (accepted) this.store.recordSessionImpression(line.payoutPaise ?? 0);
+      this.store.recordSessionImpression(line.payoutPaise ?? 0);
       const rupees = (this.store.getSessionEarningsPaise() / 100).toFixed(2);
       this.sessionBar.text = `$(coin) ₹${rupees} this session`;
       this.sessionBar.show();

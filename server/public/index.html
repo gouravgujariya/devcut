@@ -551,7 +551,7 @@
             <th>URL</th>
             <th>Slot</th>
             <th>Bid (paise)</th>
-            <th>Daily Budget</th>
+            <th>Spend / Budget</th>
             <th>Impressions</th>
             <th>Clicks</th>
             <th>CTR</th>
@@ -790,20 +790,26 @@
     </div>
     <div class="form-row">
       <div class="form-group">
-        <label>Payout (paise) <span style="color:#475569">— dev earns</span></label>
-        <input id="f-payout" type="number" value="25" min="1" />
-        <div class="hint">Default 25p (60% of 42p bid). Dev receives this per impression.</div>
-      </div>
-      <div class="form-group">
         <label>CPM Bid (paise)</label>
         <input id="f-bid" type="number" value="42" min="1" />
         <div class="hint">What sponsor pays per impression.</div>
       </div>
+      <div class="form-group">
+        <label>Payout <span style="color:#475569">— derived</span></label>
+        <div class="hint" id="f-payout-display">dev earns: 25p per impression (60% of bid)</div>
+      </div>
     </div>
-    <div class="form-group">
-      <label>Daily Budget (₹) <span style="color:#475569">— optional, blank = unlimited</span></label>
-      <input id="f-budget" type="number" placeholder="e.g. 500" min="0" step="0.01" />
-      <div class="hint">Stored as paise internally. Leave blank for unlimited.</div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>Daily Budget (₹) <span style="color:#475569">— optional, blank = unlimited</span></label>
+        <input id="f-budget" type="number" placeholder="e.g. 500" min="0" step="0.01" />
+        <div class="hint">Stored as paise internally. Leave blank for unlimited.</div>
+      </div>
+      <div class="form-group">
+        <label>Total Budget (₹) <span style="color:#475569">— optional, blank = unlimited</span></label>
+        <input id="f-budget-total" type="number" placeholder="e.g. 5000" min="0" step="0.01" />
+        <div class="hint">Stored as paise internally. Leave blank for unlimited.</div>
+      </div>
     </div>
     <div class="form-group">
       <label>Status</label>
@@ -1075,15 +1081,19 @@
         return;
       }
       tbody.innerHTML = SPONSORS.map((s, i) => {
-        const budgetDisplay = s.budget_paise_daily != null
-          ? paise2rupee(s.budget_paise_daily) + '/day'
-          : '<span style="color:#475569">Unlimited</span>';
+        const dailyBudget = s.budget_paise_daily != null ? paise2rupee(s.budget_paise_daily) : '∞';
+        const totalBudget = s.budget_paise_total != null ? paise2rupee(s.budget_paise_total) : '∞';
+        const exhausted = s.budget_paise_total != null && (s.total_spend_paise || 0) >= s.budget_paise_total;
+        const budgetDisplay = `
+          <div>${paise2rupee(s.daily_spend_paise || 0)} / ${dailyBudget} day</div>
+          <div class="stack-hint">${paise2rupee(s.total_spend_paise || 0)} / ${totalBudget} total</div>
+          ${exhausted ? '<div class="stack-hint"><span class="pill pill-gray">budget exhausted</span></div>' : ''}`;
         const slot = String(s.slot_type || 'all');
         const stack = s.target_stack
           ? `<div class="stack-hint" title="${esc(s.target_stack)}">→ ${esc(s.target_stack)}</div>`
           : '';
         return `
-          <tr>
+          <tr${exhausted ? ' style="opacity:.55"' : ''}>
             <td>
               <div class="adv-cell">
                 ${logoCell(s.name, s.logo_url)}
@@ -1122,13 +1132,18 @@
     document.getElementById('f-name').value = sponsor ? (sponsor.name || '') : '';
     document.getElementById('f-text').value = sponsor ? (sponsor.text || '') : '';
     document.getElementById('f-url').value = sponsor ? (sponsor.url || '') : '';
-    document.getElementById('f-payout').value = sponsor ? (sponsor.payout_paise ?? 25) : 25;
     document.getElementById('f-bid').value = sponsor ? (sponsor.bid_paise ?? 42) : 42;
-    // budget stored as paise, show as ₹
+    updatePayoutDisplay();
+    // budgets stored as paise, show as ₹
     if (sponsor && sponsor.budget_paise_daily != null) {
       document.getElementById('f-budget').value = (sponsor.budget_paise_daily / 100).toFixed(2);
     } else {
       document.getElementById('f-budget').value = '';
+    }
+    if (sponsor && sponsor.budget_paise_total != null) {
+      document.getElementById('f-budget-total').value = (sponsor.budget_paise_total / 100).toFixed(2);
+    } else {
+      document.getElementById('f-budget-total').value = '';
     }
     document.getElementById('f-active').value = sponsor ? (sponsor.active ? '1' : '0') : '1';
     document.getElementById('f-logo').value = sponsor ? (sponsor.logo_url || '') : '';
@@ -1138,6 +1153,14 @@
     document.getElementById('sponsor-modal-overlay').classList.add('open');
     document.getElementById('f-name').focus();
   }
+
+  // payout is derived server-side as round(bid * 0.6); this is display-only
+  function updatePayoutDisplay() {
+    const bid = parseInt(document.getElementById('f-bid').value) || 42;
+    document.getElementById('f-payout-display').textContent =
+      `dev earns: ${Math.round(bid * 0.6)}p per impression (60% of bid)`;
+  }
+  document.getElementById('f-bid').addEventListener('input', updatePayoutDisplay);
 
   function previewLogo() {
     const url = document.getElementById('f-logo').value.trim();
@@ -1156,15 +1179,16 @@
   async function saveAd() {
     const id = document.getElementById('edit-id').value;
     const budgetRaw = document.getElementById('f-budget').value.trim();
+    const budgetTotalRaw = document.getElementById('f-budget-total').value.trim();
     const logo = document.getElementById('f-logo').value.trim();
     const stack = document.getElementById('f-target-stack').value.trim();
     const body = {
       name: document.getElementById('f-name').value.trim(),
       text: document.getElementById('f-text').value.trim(),
       url: document.getElementById('f-url').value.trim(),
-      payout_paise: parseInt(document.getElementById('f-payout').value) || 25,
       bid_paise: parseInt(document.getElementById('f-bid').value) || 42,
       budget_paise_daily: budgetRaw !== '' ? Math.round(parseFloat(budgetRaw) * 100) : null,
+      budget_paise_total: budgetTotalRaw !== '' ? Math.round(parseFloat(budgetTotalRaw) * 100) : null,
       active: document.getElementById('f-active').value === '1',
       logo_url: logo || null,
       slot_type: document.getElementById('f-slot-type').value,

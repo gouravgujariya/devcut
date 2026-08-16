@@ -1,6 +1,13 @@
 const Database = require("better-sqlite3");
 const path = require("path");
 
+if (process.env.NODE_ENV === "production" && !process.env.DB_PATH) {
+  console.error(
+    "[db] WARNING: NODE_ENV=production but DB_PATH is not set — SQLite is on ephemeral disk " +
+    "and ALL DATA (users, earnings, withdrawals) WILL BE LOST on redeploy. Point DB_PATH at a persistent volume."
+  );
+}
+
 const db = new Database(process.env.DB_PATH || path.join(__dirname, "kickback.db"));
 
 db.exec(`
@@ -130,6 +137,31 @@ try { db.exec("ALTER TABLE impressions ADD COLUMN payout_paise INTEGER NOT NULL 
 db.exec(`UPDATE impressions SET payout_paise = (
   SELECT COALESCE(s.payout_paise, 0) FROM sponsors s WHERE s.id = impressions.sponsor_id
 ) WHERE payout_paise = 0 AND sponsor_id IN (SELECT id FROM sponsors)`);
+
+// Record the bid per impression (budgets are bid-denominated) + single-use token id (jti)
+try { db.exec("ALTER TABLE impressions ADD COLUMN bid_paise INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+try { db.exec("ALTER TABLE impressions ADD COLUMN jti TEXT"); } catch (_) {}
+db.exec(`UPDATE impressions SET bid_paise = (
+  SELECT COALESCE(s.bid_paise, 0) FROM sponsors s WHERE s.id = impressions.sponsor_id
+) WHERE bid_paise = 0 AND sponsor_id IN (SELECT id FROM sponsors)`);
+
+// 24h withdrawal lock after a UPI change (see POST /v1/withdraw)
+try { db.exec("ALTER TABLE users ADD COLUMN upi_updated_at INTEGER"); } catch (_) {}
+
+// Signup metadata + canonical email for dedupe (backfilled at startup in backend.js)
+try { db.exec("ALTER TABLE beta_invites ADD COLUMN email_canonical TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE beta_invites ADD COLUMN role TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE beta_invites ADD COLUMN github TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE beta_invites ADD COLUMN source TEXT"); } catch (_) {}
+
+// Single-use impression tokens + at most one pending withdrawal per user.
+// try/catch: a legacy DB with duplicate rows would fail creation — warn, don't crash.
+for (const sql of [
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_impressions_jti ON impressions(jti) WHERE jti IS NOT NULL",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_withdrawals_pending ON withdrawals(user_id) WHERE status = 'pending'",
+]) {
+  try { db.exec(sql); } catch (e) { console.error("[db] index creation failed:", e.message); }
+}
 
 // Indexes for high-traffic queries (earnings, budget checks, token lookup)
 db.exec(`

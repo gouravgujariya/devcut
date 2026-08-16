@@ -1,4 +1,5 @@
 const { verifyAccessToken } = require("./auth");
+const { timingSafeEqual } = require("crypto");
 const rateLimit = require("express-rate-limit");
 
 // Lazily load db to avoid circular require at module load time
@@ -18,7 +19,7 @@ function requireAuth(req, res, next) {
     const claims = verifyAccessToken(token);
     const user = getDb().prepare("SELECT status FROM users WHERE id = ?").get(claims.sub);
     if (!user) return res.status(401).json({ error: "user_not_found" });
-    if (user.status === "revoked") return res.status(403).json({ error: "account_revoked" });
+    if (user.status !== "active") return res.status(403).json({ error: "account_revoked" });
     req.userId = claims.sub;
     next();
   } catch (e) {
@@ -27,13 +28,14 @@ function requireAuth(req, res, next) {
   }
 }
 
+// Fails closed: no ADMIN_KEY → no admin API, in every environment.
 function adminAuth(req, res, next) {
-  const key = req.headers["x-admin-key"];
   if (!process.env.ADMIN_KEY) {
-    if (process.env.NODE_ENV !== "production") return next();
     return res.status(503).json({ error: "admin_not_configured" });
   }
-  if (key !== process.env.ADMIN_KEY) {
+  const given = Buffer.from(String(req.headers["x-admin-key"] || ""));
+  const expected = Buffer.from(process.env.ADMIN_KEY);
+  if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
     return res.status(401).json({ error: "unauthorized" });
   }
   next();
