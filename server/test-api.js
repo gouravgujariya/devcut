@@ -7,7 +7,7 @@ const path = require("node:path");
 
 const DB_PATH = path.join(os.tmpdir(), `devcut-test-${process.pid}.db`);
 process.env.DB_PATH = DB_PATH;
-delete process.env.ADMIN_KEY;   // dev mode: adminAuth passes through
+process.env.ADMIN_KEY = "test-admin-key";   // adminAuth fails closed without one
 process.env.NODE_ENV = "test";
 
 const app = require("./backend");
@@ -17,7 +17,7 @@ let base;
 const api = async (method, url, body, token) => {
   const res = await fetch(base + url, {
     method,
-    headers: { "Content-Type": "application/json", ...(token && { Authorization: "Bearer " + token }) },
+    headers: { "Content-Type": "application/json", "x-admin-key": "test-admin-key", ...(token && { Authorization: "Bearer " + token }) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: res.status, body: await res.json() };
@@ -69,9 +69,9 @@ async function main() {
   db.prepare("UPDATE sponsors SET active = 0 WHERE id = ?").run("sponsor-go");
 
   // ── /v1/me/analytics ──────────────────────────────────────────────────────
-  const ins = db.prepare("INSERT INTO impressions (user_id, sponsor_id, task_type, payout_paise, ts) VALUES (?,?,?,?,unixepoch())");
-  ins.run(userId, "sponsor-idle", "npm", 25);
-  ins.run(userId, "sponsor-build", "gradle", 60);
+  const ins = db.prepare("INSERT INTO impressions (user_id, sponsor_id, task_type, payout_paise, bid_paise, ts) VALUES (?,?,?,?,?,unixepoch())");
+  ins.run(userId, "sponsor-idle", "npm", 25, 42);
+  ins.run(userId, "sponsor-build", "gradle", 60, 100);
   db.prepare("INSERT INTO clicks (user_id, sponsor_id) VALUES (?,?)").run(userId, "sponsor-idle");
 
   const an = (await api("GET", "/v1/me/analytics", undefined, token)).body;
@@ -183,7 +183,7 @@ async function main() {
   // ── total (lifetime) budget cap ─────────────────────────────────────────────
   db.exec("UPDATE sponsors SET active = 0"); // isolate from earlier test sponsors
   sponsor("sponsor-capped", { bid_paise: 42, budget_paise_total: 50 });
-  ins.run(userId, "sponsor-capped", null, 50); // lifetime spend already at the cap
+  ins.run(userId, "sponsor-capped", null, 30, 50); // lifetime bid-spend already at the cap
   const cappedLine = await api("GET", "/v1/sponsor-line", undefined, token);
   assert.strictEqual(cappedLine.body, null, "sponsor must drop out once lifetime budget is spent");
 
@@ -201,6 +201,52 @@ async function main() {
     seen.add(line.body.id);
   }
   assert.ok(seen.size > 1, "weighted selection should surface more than one sponsor across draws, got: " + [...seen]);
+
+  // ── impression tokens: required, single-use, budget-enforced at spend time ──
+  db.exec("UPDATE sponsors SET active = 0");
+  sponsor("sponsor-tok", { bid_paise: 42, budget_paise_total: 60 }); // room for exactly one bid
+  // sidestep the 25s per-user impression floor by backdating prior impressions
+  const backdate = db.prepare("UPDATE impressions SET ts = ts - 60 WHERE user_id = ?");
+
+  const tokLine = await api("GET", "/v1/sponsor-line", undefined, token);
+  assert.ok(tokLine.body.impressionToken, "sponsor-line must return an impressionToken");
+
+  // idle pays less: same sponsor, idle=1 → half payout in both display and token
+  const idleHalf = await api("GET", "/v1/sponsor-line?idle=1", undefined, token);
+  assert.strictEqual(idleHalf.body.payoutPaise, 13, "idle impressions must pay round(25 * 0.5)");
+
+  backdate.run(userId);
+  assert.strictEqual((await api("POST", "/v1/impressions", { taskType: "npm" }, token)).status, 400, "impression without token must 400");
+  assert.strictEqual((await api("POST", "/v1/impressions", { token: "garbage" }, token)).body.error, "invalid_impression_token");
+
+  const imp1 = await api("POST", "/v1/impressions", { token: tokLine.body.impressionToken, taskType: "npm" }, token);
+  assert.strictEqual(imp1.status, 200, "tokened impression must credit: " + JSON.stringify(imp1.body));
+
+  backdate.run(userId);
+  const dup = await api("POST", "/v1/impressions", { token: tokLine.body.impressionToken }, token);
+  assert.strictEqual(dup.status, 409, "same token twice must 409");
+  assert.strictEqual(dup.body.error, "duplicate_impression");
+
+  // budget stop: 42 spent of 60 — sponsor still serveable, but a second bid (84 > 60) must not land
+  backdate.run(userId);
+  const tokLine2 = await api("GET", "/v1/sponsor-line", undefined, token);
+  assert.ok(tokLine2.body?.impressionToken, "sponsor with budget headroom must still serve");
+  const imp2 = await api("POST", "/v1/impressions", { token: tokLine2.body.impressionToken }, token);
+  assert.strictEqual(imp2.status, 410, "impression past the budget must 410: " + JSON.stringify(imp2.body));
+  assert.strictEqual(imp2.body.error, "budget_exhausted");
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE sponsor_id = 'sponsor-tok'").get().n, 1,
+    "budget-rejected impression must not be inserted");
+
+  // ── UPI hygiene: format check + 24h withdrawal lock after a change ─────────
+  assert.strictEqual((await api("PUT", "/v1/profile/upi", { upiId: "bad upi!" }, token)).status, 400, "junk UPI must 400");
+  assert.deepStrictEqual((await api("PUT", "/v1/profile/upi", { upiId: "dev@upi" }, token)).body, { ok: true });
+  const wd = await api("POST", "/v1/withdraw", undefined, token);
+  assert.strictEqual(wd.status, 400);
+  assert.strictEqual(wd.body.error, "upi_recently_changed", "fresh UPI must block withdrawal: " + JSON.stringify(wd.body));
+
+  // ── admin auth fails closed ────────────────────────────────────────────────
+  const noKey = await fetch(base + "/api/overview");
+  assert.strictEqual(noKey.status, 401, "admin endpoint without x-admin-key must be rejected");
 
   console.log("test-api: all assertions passed");
 }

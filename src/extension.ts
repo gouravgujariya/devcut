@@ -246,7 +246,7 @@ export function activate(context: vscode.ExtensionContext) {
         prompt: "Enter your UPI ID for earnings payout",
         placeHolder: "yourname@upi or phone@paytm",
         ignoreFocusOut: true,
-        validateInput: (v) => v.includes("@") ? undefined : "UPI ID must contain @",
+        validateInput: (v) => /^[\w.\-]{2,64}@[a-zA-Z]{2,32}$/.test(v.trim()) ? undefined : "Enter a valid UPI ID, e.g. name@bank",
       });
       if (!upiId) return;
 
