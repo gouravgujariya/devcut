@@ -32,3 +32,25 @@ npm-debug.log*
 
 # graphify knowledge graph (generated, not source)
 graphify-out/
+
+# Notes & data — denylist, NOT a by-name list. Every new strategy/outreach file
+# would otherwise ship silently: devcut_outreach_devs.csv leaked real developers'
+# private email addresses into the 0.1.4 package before this rule existed.
+# Only README.md ships (it is the extension's description page).
+*.md
+!README.md
+*.csv
+*.tsv
+*.json
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.ico
+*.webp
+*.svg
+*.pdf
+*.docx
+!package.json

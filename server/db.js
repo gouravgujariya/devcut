@@ -154,6 +154,10 @@ try { db.exec("ALTER TABLE beta_invites ADD COLUMN role TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE beta_invites ADD COLUMN github TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE beta_invites ADD COLUMN source TEXT"); } catch (_) {}
 
+// GitHub sign-in as an alternative to invite-code login (POST /v1/auth/github)
+try { db.exec("ALTER TABLE users ADD COLUMN github_id TEXT"); } catch (_) {}
+try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id) WHERE github_id IS NOT NULL"); } catch (_) {}
+
 // Single-use impression tokens + at most one pending withdrawal per user.
 // try/catch: a legacy DB with duplicate rows would fail creation — warn, don't crash.
 for (const sql of [
@@ -188,6 +192,20 @@ db.exec(`
     notes           TEXT,
     status          TEXT NOT NULL DEFAULT 'new',
     created_at      INTEGER NOT NULL DEFAULT (unixepoch())
+  )
+`);
+
+// Extension/dashboard changelog — posted from the admin panel (POST/PUT/DELETE /api/updates).
+// notes is a JSON-encoded string array (SQLite has no array type).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS changelog_entries (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    version    TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    notes      TEXT NOT NULL DEFAULT '[]',
+    critical   INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
   )
 `);
 

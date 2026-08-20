@@ -23,10 +23,17 @@ scripts/
 tsconfig.json
 railway.toml
 competition.ini
-howtouse.md
-INDIA-STRATEGY.md
-SCALE-PLAN.md
-issues.md
+
+# Notes & data — denylist, NOT a by-name list. Every new strategy/outreach file
+# would otherwise ship silently: devcut_outreach_devs.csv leaked real developers'
+# private email addresses into the 0.1.4 package before this rule existed.
+# Only README.md ships (it is the extension's description page).
+*.md
+!README.md
+*.csv
+*.tsv
+*.json
+!package.json
 
 # Images (not used in extension UI — except logo.png)
 !logo.png

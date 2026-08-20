@@ -265,6 +265,17 @@
     .pill-red { background: #450a0a; color: #f87171; }
     .pill-blue { background: #1e3a5f; color: #60a5fa; }
 
+    /* ── News / Updates ── */
+    .update-list { display: flex; flex-direction: column; gap: 12px; }
+    .update-item { background: #1a1d27; border: 1px solid #2d3148; border-radius: 12px; padding: 16px 20px; }
+    .update-item-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .update-item-title { font-weight: 700; }
+    .update-item-version { color: #6366f1; font-family: monospace; margin-right: 8px; }
+    .update-item-date { color: #64748b; font-size: 12px; }
+    .update-item ul { margin: 10px 0 0; padding-left: 20px; color: #cbd5e1; font-size: 13px; }
+    .update-item ul li { margin-bottom: 4px; }
+    .update-item-actions { display: flex; gap: 8px; }
+
     /* ── Modal ── */
     .overlay {
       display: none;
@@ -459,6 +470,7 @@
   <button onclick="showPage('users', this)">Users</button>
   <button id="nav-withdrawals" onclick="showPage('withdrawals', this)">Withdrawals</button>
   <button onclick="showPage('teams', this)">Teams</button>
+  <button onclick="showPage('updates', this)">News</button>
 </nav>
 
 <main>
@@ -627,6 +639,7 @@
           <tr>
             <th>Code</th>
             <th>Email</th>
+            <th>Company</th>
             <th>Created</th>
             <th>Status</th>
             <th>Used By</th>
@@ -634,7 +647,7 @@
           </tr>
         </thead>
         <tbody id="invites-tbody">
-          <tr><td colspan="6" class="loading-text">Loading...</td></tr>
+          <tr><td colspan="7" class="loading-text">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -652,6 +665,7 @@
         <thead>
           <tr>
             <th>Email</th>
+            <th>Company</th>
             <th>User ID</th>
             <th>UPI Set</th>
             <th>Earnings (₹)</th>
@@ -661,7 +675,7 @@
           </tr>
         </thead>
         <tbody id="users-tbody">
-          <tr><td colspan="7" class="loading-text">Loading...</td></tr>
+          <tr><td colspan="8" class="loading-text">Loading...</td></tr>
         </tbody>
       </table>
     </div>
@@ -737,6 +751,20 @@
           <tr><td colspan="5" class="loading-text">Loading...</td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       News / Updates — what shows at GET /v1/updates (extension
+       red dot + web dashboard "What's New")
+  ════════════════════════════════════════════════════════════ -->
+  <div id="page-updates" class="page">
+    <div class="toolbar">
+      <div class="section-title" style="margin:0">News</div>
+      <button class="btn btn-primary" onclick="openUpdateModal()">+ Post Update</button>
+    </div>
+    <div class="update-list" id="updates-list">
+      <div class="loading-text">Loading...</div>
     </div>
   </div>
 
@@ -850,6 +878,41 @@
   </div>
 </div>
 
+<!-- ══════════════════════════════════════════════════════════
+     Update (News) Modal
+════════════════════════════════════════════════════════════ -->
+<div class="overlay" id="update-modal-overlay" onclick="closeUpdateModalOnBg(event)">
+  <div class="modal">
+    <h2 id="update-modal-title">Post Update</h2>
+    <input type="hidden" id="u-edit-id" />
+
+    <div class="form-group">
+      <label>Version <span style="color:#475569">— what's shown as "latest", e.g. 0.1.5</span></label>
+      <input id="u-version" placeholder="0.1.5" />
+    </div>
+    <div class="form-group">
+      <label>Title</label>
+      <input id="u-title" placeholder="e.g. Faster earnings sync" />
+    </div>
+    <div class="form-group">
+      <label>Notes <span style="color:#475569">— one bullet per line</span></label>
+      <textarea id="u-notes" rows="4" placeholder="Fixed the login bug for returning users&#10;New GitHub sign-in option"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Date <span style="color:#475569">— optional, defaults to today</span></label>
+      <input id="u-date" placeholder="YYYY-MM-DD" />
+    </div>
+    <div class="form-group">
+      <label><input type="checkbox" id="u-critical" style="width:auto;margin-right:8px" />Critical — worth flagging as urgent</label>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeUpdateModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveUpdate()">Save</button>
+    </div>
+  </div>
+</div>
+
 <script>
   // ── Admin key auth ───────────────────────────────────────────
   let ADMIN_KEY = sessionStorage.getItem('adminKey') || '';
@@ -957,6 +1020,7 @@
       if (name === 'users') loadUsers();
       if (name === 'withdrawals') loadWithdrawals();
       if (name === 'teams') loadTeams();
+      if (name === 'updates') loadUpdates();
     }
   }
 
@@ -1358,7 +1422,7 @@
       const invites = await apiFetch('/api/invites').then(r => r.json());
       const tbody = document.getElementById('invites-tbody');
       if (!invites.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="empty"><span class="empty-icon">🎟️</span><strong>No invites yet</strong>Create one to onboard a developer.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="empty"><span class="empty-icon">🎟️</span><strong>No invites yet</strong>Create one to onboard a developer.</td></tr>';
         return;
       }
       tbody.innerHTML = invites.map(inv => {
@@ -1367,6 +1431,7 @@
           <tr>
             <td><span class="mono">${esc(inv.code)}</span></td>
             <td>${esc(inv.email || '—')}</td>
+            <td>${esc(inv.company || '—')}</td>
             <td>${fmtDate(inv.created_at)}</td>
             <td><span class="pill ${used ? 'pill-gray' : 'pill-green'}">${used ? 'Used' : 'Available'}</span></td>
             <td>${inv.used_by_user_id ? '<span class="mono">' + esc(String(inv.used_by_user_id).slice(-8)) + '</span>' : '—'}</td>
@@ -1427,12 +1492,13 @@
       const users = await apiFetch('/api/users').then(r => r.json());
       const tbody = document.getElementById('users-tbody');
       if (!users.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty"><span class="empty-icon">👥</span><strong>No registered developers yet</strong>Users appear here after they sign in from the extension.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty"><span class="empty-icon">👥</span><strong>No registered developers yet</strong>Users appear here after they sign in from the extension.</td></tr>';
         return;
       }
       tbody.innerHTML = users.map(u => `
         <tr>
           <td>${esc(u.email || '—')}</td>
+          <td>${esc(u.company || '—')}</td>
           <td><span class="mono">${esc(String(u.id || '').slice(-8))}</span></td>
           <td>${u.upi_id
             ? '<span class="check-yes" title="' + esc(u.upi_id) + '">&#10003;</span>'
@@ -1573,6 +1639,101 @@
       console.error('Teams load error:', e);
     } finally {
       setLoading('teams', false);
+    }
+  }
+
+  // ── News / Updates ───────────────────────────────────────────
+  // Everything shown here also ships publicly at GET /v1/updates
+  // (extension red dot + web dashboard "What's New"), so only esc().
+  let UPDATES = [];
+
+  async function loadUpdates() {
+    setLoading('updates', true);
+    try {
+      UPDATES = await apiFetch('/api/updates').then(r => r.json());
+      const list = document.getElementById('updates-list');
+      if (!UPDATES.length) {
+        list.innerHTML = '<div class="empty"><span class="empty-icon">📰</span><strong>No updates posted yet</strong>Post one so the extension and dashboard have something to show.</div>';
+        return;
+      }
+      list.innerHTML = UPDATES.map((u, i) => `
+        <div class="update-item">
+          <div class="update-item-head">
+            <div class="update-item-title"><span class="update-item-version">${esc(u.version)}</span>${esc(u.title)}
+              ${u.critical ? '<span class="pill pill-red" style="margin-left:8px">Critical</span>' : ''}
+            </div>
+            <div class="update-item-actions">
+              <span class="update-item-date">${esc(u.date)}</span>
+              <button class="btn btn-ghost btn-sm" onclick="openUpdateModal(UPDATES[${i}])">Edit</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteUpdate(UPDATES[${i}])">Delete</button>
+            </div>
+          </div>
+          <ul>${u.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>
+        </div>
+      `).join('');
+    } catch(e) {
+      console.error('Updates load error:', e);
+    } finally {
+      setLoading('updates', false);
+    }
+  }
+
+  function openUpdateModal(update) {
+    document.getElementById('update-modal-title').textContent = update ? 'Edit Update' : 'Post Update';
+    document.getElementById('u-edit-id').value = update ? update.id : '';
+    document.getElementById('u-version').value = update ? update.version : '';
+    document.getElementById('u-title').value = update ? update.title : '';
+    document.getElementById('u-notes').value = update ? update.notes.join('\n') : '';
+    document.getElementById('u-date').value = update ? update.date : '';
+    document.getElementById('u-critical').checked = update ? !!update.critical : false;
+    document.getElementById('update-modal-overlay').classList.add('open');
+    document.getElementById('u-version').focus();
+  }
+  function closeUpdateModal() {
+    document.getElementById('update-modal-overlay').classList.remove('open');
+  }
+  function closeUpdateModalOnBg(e) {
+    if (e.target === document.getElementById('update-modal-overlay')) closeUpdateModal();
+  }
+
+  async function saveUpdate() {
+    const id = document.getElementById('u-edit-id').value;
+    const version = document.getElementById('u-version').value.trim();
+    const title = document.getElementById('u-title').value.trim();
+    const notes = document.getElementById('u-notes').value.split('\n').map(s => s.trim()).filter(Boolean);
+    const date = document.getElementById('u-date').value.trim();
+    if (!version || !title || !notes.length) {
+      alert('Version, title, and at least one note are required.');
+      return;
+    }
+    const body = { version, title, notes, critical: document.getElementById('u-critical').checked };
+    if (date) body.date = date;
+    const method = id ? 'PUT' : 'POST';
+    const url = id ? `/api/updates/${id}` : '/api/updates';
+    try {
+      const res = await apiFetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!res.ok) throw new Error(await res.text());
+      closeUpdateModal();
+      loaded['updates'] = false;
+      loadUpdates();
+    } catch(e) {
+      alert('Error saving update: ' + e.message);
+    }
+  }
+
+  async function deleteUpdate(update) {
+    if (!update) return;
+    if (!confirm(`Delete "${update.version} — ${update.title}"? This removes it from the extension and dashboard immediately.`)) return;
+    try {
+      await apiFetch(`/api/updates/${encodeURIComponent(update.id)}`, { method: 'DELETE' });
+      loaded['updates'] = false;
+      loadUpdates();
+    } catch(e) {
+      alert('Error deleting update: ' + e.message);
     }
   }
 

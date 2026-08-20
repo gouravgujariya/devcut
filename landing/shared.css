@@ -106,6 +106,12 @@ section { padding: 6rem 2rem; }
 }
 .btn-secondary:hover { border-color: var(--muted); transform: translateY(-2px); }
 
+/* ── FUNNEL: TWO-ACTION CTA ROW + ALT PATH ── */
+.cta-row { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; }
+.alt-path { color: var(--muted); font-size: .88rem; margin-top: 1.2rem; text-align: center; }
+.alt-path a { color: var(--blue); text-decoration: none; font-weight: 600; }
+.alt-path a:hover { text-decoration: underline; }
+
 /* ── CARDS ── */
 .step-card {
   background: var(--surface2); border: 1px solid var(--border);

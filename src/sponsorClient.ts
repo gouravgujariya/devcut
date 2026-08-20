@@ -34,6 +34,34 @@ export interface WithdrawalRecord {
   resolved_at?: number | null;
 }
 
+export interface UpdateEntry {
+  version: string;
+  date: string;
+  title: string;
+  notes: string[];
+  critical?: boolean;
+}
+
+export interface UpdateInfo {
+  latest: string;
+  entries: UpdateEntry[];
+}
+
+/**
+ * True if `a` is a newer version than `b`. Compares each dot-separated part as an
+ * integer — a plain string compare would rank "0.1.10" *older* than "0.1.9".
+ * Lives here (not in a new file) because both extension.ts and panel.ts need it.
+ */
+export function isNewerVersion(a: string, b: string): boolean {
+  const pa = String(a).split(".");
+  const pb = String(b).split(".");
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (parseInt(pa[i], 10) || 0) - (parseInt(pb[i], 10) || 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
 export interface TeamInfo {
   team: { id: string; name: string; code: string; ownerId: string };
   leaderboard: Array<{ user_id: string; total_paise: number; impression_count: number }>;
@@ -123,6 +151,18 @@ export class SponsorClient {
     }
   }
 
+  /** skipAuth: the .vsix has no Marketplace update prompt, so even a user who
+   *  never activated deserves to hear that a newer build exists. */
+  async fetchUpdates(): Promise<UpdateInfo | undefined> {
+    try {
+      const data = await this.request("GET", "/v1/updates", undefined, { skipAuth: true });
+      if (!data) return undefined;
+      return JSON.parse(data) as UpdateInfo;
+    } catch {
+      return undefined;
+    }
+  }
+
   // ── Auth ─────────────────────────────────────────────────────────────────
 
   async register(inviteCode: string): Promise<{ accessToken: string; refreshToken: string; userId: string }> {
@@ -138,6 +178,15 @@ export class SponsorClient {
     // (e.g. "invalid_code", "account_revoked"). Network failures resolve to undefined.
     const data = await this.request("POST", "/v1/login", { inviteCode }, { skipAuth: true });
     if (!data) throw new Error("Login failed — could not reach backend");
+    return JSON.parse(data) as { accessToken: string; refreshToken: string; userId: string };
+  }
+
+  /** Alternative to invite-code login: exchange a GitHub access token (from vscode.authentication) for our JWT pair. */
+  async loginWithGithub(githubAccessToken: string): Promise<{ accessToken: string; refreshToken: string; userId: string }> {
+    // request() rejects with an Error whose message is the backend error code
+    // (e.g. "not_invited", "account_revoked"). Network failures resolve to undefined.
+    const data = await this.request("POST", "/v1/auth/github", { accessToken: githubAccessToken }, { skipAuth: true });
+    if (!data) throw new Error("GitHub sign-in failed — could not reach backend");
     return JSON.parse(data) as { accessToken: string; refreshToken: string; userId: string };
   }
 
