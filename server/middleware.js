@@ -73,4 +73,16 @@ const authRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
-module.exports = { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit, authRateLimit };
+// GitHub OAuth needs its own budget: one sign-in costs two requests (start +
+// callback), so authRateLimit's 10/min locks out a shared office NAT after five
+// people — and a 429 on the callback is unrecoverable, since GitHub's code is
+// already spent. Neither endpoint takes a guessable credential (state is
+// server-minted and single-use), so a looser limit costs nothing.
+const oauthRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+module.exports = { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit, authRateLimit, oauthRateLimit };

@@ -283,6 +283,33 @@
     }
     .stat-label { color: var(--muted); font-size: .82rem; margin-top: .2rem; }
 
+    /* ── TRANSPARENCY PANEL (live numbers, pulled from /v1/public/stats) ── */
+    .stat-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1.2rem;
+    }
+    .stat {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 14px; padding: 1.5rem 1rem; text-align: center;
+    }
+    .stat-value { font-size: 1.9rem; font-weight: 900; line-height: 1; color: var(--text); }
+    .stat.warn { border-color: rgba(247,129,102,.35); background: rgba(247,129,102,.05); }
+    .card {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 14px; padding: 1.6rem;
+    }
+    .card h2 { font-size: 1rem; font-weight: 700; margin-bottom: 1rem; }
+    .card-note { color: var(--muted); font-size: .85rem; }
+    .chart { display: flex; align-items: flex-end; gap: 3px; height: 110px; }
+    .chart-col { flex: 1; display: flex; align-items: flex-end; height: 100%; }
+    .chart-bar { width: 100%; background: var(--blue); border-radius: 3px 3px 0 0; min-height: 2px; }
+    .chart-axis { display: flex; justify-content: space-between; color: var(--muted); font-size: .75rem; margin-top: .5rem; }
+    .bar-row { display: flex; align-items: center; gap: .7rem; margin-bottom: .7rem; }
+    .bar-label { width: 90px; flex-shrink: 0; font-size: .85rem; color: var(--muted); text-transform: capitalize; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { flex: 1; background: var(--surface); border-radius: 4px; height: 8px; overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--green); border-radius: 4px; }
+    .bar-count { width: 44px; flex-shrink: 0; text-align: right; font-size: .8rem; color: var(--muted); }
+
     /* ── SHARED SECTION ── */
     section { padding: 6rem 2rem; }
     .container { max-width: 1100px; margin: 0 auto; }
@@ -457,7 +484,40 @@
     ::-webkit-scrollbar-track { background: var(--bg); }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-    /* ── EARLY ACCESS FORM ── */
+    /* ── FUNNEL: FLOW STRIP + GET-CODE PANEL ── */
+    .flow-strip {
+      display: flex; gap: .6rem; flex-wrap: wrap; justify-content: center;
+      margin-top: 2rem;
+    }
+    .flow-step {
+      display: inline-flex; align-items: center; gap: .5rem;
+      background: rgba(22,27,34,.7); border: 1px solid var(--border);
+      border-radius: 100px; padding: .4rem 1rem;
+      font-size: .82rem; color: var(--muted); backdrop-filter: blur(8px);
+    }
+    .flow-step b { color: var(--text); font-weight: 600; }
+    a.flow-step { text-decoration: none; transition: border-color .2s; }
+    a.flow-step:hover { border-color: var(--green); }
+    .flow-n {
+      width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+      background: rgba(0,230,118,.14); color: var(--green);
+      font-size: .7rem; font-weight: 800;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+    .alt-path { color: var(--muted); font-size: .88rem; margin-top: 1.2rem; }
+    .alt-path a { color: var(--blue); text-decoration: none; font-weight: 600; }
+    .alt-path a:hover { text-decoration: underline; }
+    .code-panel {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 16px; padding: 2rem; text-align: left;
+      box-shadow: 0 18px 60px rgba(0,0,0,.3);
+    }
+    .code-panel .field-label {
+      display: block; font-size: .78rem; font-weight: 600;
+      color: var(--muted); margin-bottom: .35rem;
+    }
+
+    /* ── GET-CODE FORM ── */
     .form-input {
       width: 100%; background: var(--surface2);
       border: 1px solid var(--border); border-radius: 8px;
@@ -475,9 +535,10 @@
     #submitBtn:disabled { opacity: .6; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
 
     @media (max-width: 600px) {
-      #earlyForm > div[style*="grid-template-columns:1fr 1fr"] {
+      #codeForm > div[style*="grid-template-columns:1fr 1fr"] {
         grid-template-columns: 1fr;
       }
+      .code-panel { padding: 1.4rem 1.1rem; }
     }
 
     @media (max-width: 480px) {
@@ -506,11 +567,9 @@
   <div class="nav-links">
     <a href="how-it-works.html" class="hide-mobile">How It Works</a>
     <a href="earnings.html" class="hide-mobile">Earnings</a>
-    <a href="#install" class="hide-mobile">Install</a>
     <a href="advertisers.html" class="hide-mobile">Advertise</a>
-    <a href="#india" class="hide-mobile">India</a>
-    <a href="login.html">Dashboard</a>
-    <a class="nav-cta" href="#early-access">Early Access</a>
+    <a href="login.html">Sign In</a>
+    <a class="nav-cta" href="#get-code">Get Your Code</a>
   </div>
 </nav>
 
@@ -537,9 +596,19 @@
   </p>
 
   <div class="hero-actions fade-up delay-3">
-    <a class="btn-primary" href="#early-access">✦ Join Early Access</a>
-    <a class="btn-secondary" href="#advertise">Advertise to Developers →</a>
+    <a class="btn-primary" href="#get-code">✦ Get Your Free Code</a>
+    <a class="btn-secondary" href="login.html">Sign In</a>
   </div>
+
+  <div class="flow-strip fade-up delay-3">
+    <a class="flow-step" href="#install"><span class="flow-n" aria-hidden="true">1</span> Install the <b>free VS Code extension</b></a>
+    <span class="flow-step"><span class="flow-n" aria-hidden="true">2</span> Get your <b>invite code by email</b> in seconds</span>
+    <span class="flow-step"><span class="flow-n" aria-hidden="true">3</span> <b>Earn</b> every time a build runs</span>
+  </div>
+
+  <p class="alt-path fade-up delay-3">
+    Advertising to developers instead? <a href="advertisers.html">See advertiser plans →</a>
+  </p>
 
   <div class="mockup-wrap fade-up delay-4">
     <div style="display:flex;gap:.6rem;margin-bottom:.8rem;justify-content:center;flex-wrap:wrap;">
@@ -799,9 +868,9 @@
           <li>Team pooling: share earnings with your squad</li>
           <li>One toggle to pause ads during focus sessions</li>
         </ul>
-        <a class="path-cta-dev" href="#">
+        <a class="path-cta-dev" href="#get-code">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-          Install on VS Code Marketplace
+          Get Your Free Code →
         </a>
       </div>
 
@@ -1016,6 +1085,10 @@
         <div class="stat-value" id="tsActive">—</div>
         <div class="stat-label">Developers earning today</div>
       </div>
+      <div class="stat warn" id="tsPendingCard" style="display:none;">
+        <div class="stat-value" style="color:var(--orange);" id="tsPending">—</div>
+        <div class="stat-label" id="tsPendingLabel">Pending payout</div>
+      </div>
       <div class="stat" id="tsClicksCard" style="display:none;">
         <div class="stat-value" style="color:var(--purple);" id="tsClicks">—</div>
         <div class="stat-label">Sponsor clicks</div>
@@ -1036,27 +1109,27 @@
 
     <p class="card-note" style="margin-top:1.2rem;">
       Aggregate figures only — no developer is identifiable here.
-      Already earning? <a href="dashboard.html" style="color:var(--blue);">See your own numbers →</a>
+      Already earning? <a href="login.html" style="color:var(--blue);">Sign in to see your own numbers →</a>
     </p>
   </div>
 </section>
 
-<!-- ── EARLY ACCESS ── -->
-<section id="early-access" style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
-  <div class="container" style="max-width:640px;text-align:center;">
-    <div class="section-label">Early Access</div>
-    <h2 class="section-title">Be first. Shape the product.</h2>
-    <p class="section-sub" style="margin:0 auto .4rem;">
-      We are onboarding the first 500 developers and advertisers before the public launch.
-      Leave your details — we will reach out personally.
+<!-- ── GET YOUR CODE ── -->
+<section id="get-code" style="background:rgba(22,27,34,.8);backdrop-filter:blur(4px);">
+  <div class="container" style="max-width:660px;text-align:center;">
+    <div class="section-label">Get Your Code</div>
+    <h2 class="section-title">Your invite code, emailed in seconds.</h2>
+    <p class="section-sub" style="margin:0 auto .5rem;">
+      This is not a waiting list. Fill this in and a working invite code lands in your
+      inbox right away — paste it into the extension and you start earning on your next build.
     </p>
     <p style="color:var(--green);font-size:.82rem;margin-bottom:2rem;font-weight:600;">
-      <span id="earlyCount">—</span> spots remaining
+      Free for the first 500 developers · <span id="codeCount">—</span> codes left
     </p>
     <script>
       // Fetch count as soon as this element parses — no waiting for the rest of the page
       (function() {
-        const el = document.getElementById('earlyCount');
+        const el = document.getElementById('codeCount');
         fetch('https://waitwage-production.up.railway.app/v1/public/stats', {
           cache: 'no-store', signal: AbortSignal.timeout(5000)
         }).then(r => r.json()).then(d => {
@@ -1066,45 +1139,59 @@
       })();
     </script>
 
-    <form id="earlyForm" style="display:flex;flex-direction:column;gap:1rem;">
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-        <div class="field-wrap">
-          <input class="form-input" type="text" id="f-name" placeholder="Your name" required autocomplete="name" />
+    <div class="code-panel">
+      <form id="codeForm" style="display:flex;flex-direction:column;gap:1rem;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+          <div class="field-wrap">
+            <label class="field-label" for="f-name">Your name</label>
+            <input class="form-input" type="text" id="f-name" placeholder="Ada Lovelace" required autocomplete="name" />
+          </div>
+          <div class="field-wrap">
+            <label class="field-label" for="f-email">Email — your code goes here</label>
+            <input class="form-input" type="email" id="f-email" placeholder="you@example.com" required autocomplete="email" />
+          </div>
         </div>
-        <div class="field-wrap">
-          <input class="form-input" type="email" id="f-email" placeholder="Email address" required autocomplete="email" />
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+          <div class="field-wrap">
+            <label class="field-label" for="f-role">I want to…</label>
+            <select class="form-input" id="f-role" required>
+              <option value="" disabled selected>Choose one…</option>
+              <option value="developer">Earn during my builds (developer)</option>
+              <option value="advertiser">Run ads to developers (advertiser)</option>
+              <option value="both">Both</option>
+            </select>
+          </div>
+          <div class="field-wrap">
+            <label class="field-label" for="f-github">GitHub username <span style="opacity:.7;">(optional)</span></label>
+            <input class="form-input" type="text" id="f-github" placeholder="octocat" autocomplete="off" />
+          </div>
         </div>
+
+        <div class="field-wrap">
+          <label class="field-label" for="f-company">Company or university</label>
+          <input class="form-input" type="text" id="f-company" placeholder="Where you build things" autocomplete="organization" required />
+        </div>
+
+        <button class="btn-primary" type="submit" id="submitBtn" style="width:100%;font-size:1.05rem;padding:.9rem;">
+          Email me my invite code →
+        </button>
+        <p style="color:var(--muted);font-size:.78rem;text-align:center;margin:0;">
+          No approval step, no sales call. One email with your code, that's it.
+        </p>
+      </form>
+
+      <div id="formSuccess" style="display:none;text-align:center;padding:.6rem 0;">
+        <div style="font-size:1.8rem;margin-bottom:.4rem;" id="successIcon">🎉</div>
+        <div style="font-weight:700;color:var(--green);font-size:1.05rem;" id="successTitle">Your code is on its way!</div>
+        <div style="color:var(--muted);font-size:.9rem;margin-top:.4rem;" id="successMsg">Check your inbox — paste the code into DevCut in VS Code, then <a href="login.html" style="color:var(--blue);">sign in here</a> to watch your earnings.</div>
       </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-        <div class="field-wrap">
-          <select class="form-input" id="f-role" required>
-            <option value="" disabled selected>I am a…</option>
-            <option value="developer">Developer (want to earn)</option>
-            <option value="advertiser">Advertiser (want to run ads)</option>
-            <option value="both">Both</option>
-          </select>
-        </div>
-        <div class="field-wrap">
-          <input class="form-input" type="text" id="f-github" placeholder="GitHub username (optional)" autocomplete="off" />
-        </div>
-      </div>
-
-      <div class="field-wrap">
-        <input class="form-input" type="text" id="f-company" placeholder="Company or university name" autocomplete="organization" required />
-      </div>
-
-      <button class="btn-primary" type="submit" id="submitBtn" style="width:100%;font-size:1.05rem;padding:.9rem;">
-        Request Early Access →
-      </button>
-    </form>
-
-    <div id="formSuccess" style="display:none;margin-top:1.5rem;padding:1.2rem;background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);border-radius:12px;">
-      <div style="font-size:1.8rem;margin-bottom:.4rem;" id="successIcon">🎉</div>
-      <div style="font-weight:700;color:var(--green);font-size:1.05rem;" id="successTitle">You're on the list!</div>
-      <div style="color:var(--muted);font-size:.9rem;margin-top:.4rem;" id="successMsg">Check your inbox — your invite code is on its way.</div>
+      <div id="formError" style="display:none;margin-top:1rem;color:var(--orange);font-size:.88rem;"></div>
     </div>
-    <div id="formError" style="display:none;margin-top:1rem;color:var(--orange);font-size:.88rem;"></div>
+
+    <p class="alt-path">
+      Already have a code? <a href="login.html">Sign in →</a>
+    </p>
   </div>
 </section>
 
@@ -1345,6 +1432,11 @@ setInterval(() => {
     set('tsImpressions', num(d.totalImpressions));
     set('tsPaid', '₹' + (d.totalPaidRupees != null ? d.totalPaidRupees : '0.00'));
     set('tsActive', num(d.activeDevsToday));
+    if (d.pendingPayouts && Number(d.pendingPayouts.count) > 0) {
+      set('tsPending', '₹' + d.pendingPayouts.totalRupees);
+      set('tsPendingLabel', d.pendingPayouts.count === 1 ? 'Pending payout' : 'Pending payouts');
+      show('tsPendingCard');
+    }
     if (d.totalClicks != null) { set('tsClicks', num(d.totalClicks)); show('tsClicksCard'); }
 
     // 14-day impression trend (added by the backend contract; skip the card if absent)
@@ -1389,16 +1481,16 @@ setInterval(() => {
   })();
 })();
 
-/* ── EARLY ACCESS FORM → DevCut backend ── */
+/* ── GET-CODE FORM → DevCut backend ── */
 (function () {
   const BACKEND = 'https://waitwage-production.up.railway.app';
   const TOTAL_SPOTS = 500;
 
-  const form      = document.getElementById('earlyForm');
+  const form      = document.getElementById('codeForm');
   const submitBtn = document.getElementById('submitBtn');
   const successEl = document.getElementById('formSuccess');
   const errorEl   = document.getElementById('formError');
-  const countEl   = document.getElementById('earlyCount');
+  const countEl   = document.getElementById('codeCount');
 
   /* fetch current sign-up count */
   async function fetchCount() {
@@ -1443,12 +1535,12 @@ setInterval(() => {
         // Tailor message based on what backend reported
         if (body.resent) {
           document.getElementById('successIcon').textContent = '📬';
-          document.getElementById('successTitle').textContent = 'Already registered!';
+          document.getElementById('successTitle').textContent = 'You already have a code!';
           document.getElementById('successMsg').textContent = body.email_sent
             ? 'We resent your invite code — check your inbox.'
-            : 'You\'re on the list. Invite code coming soon.';
+            : 'Your code already exists — check your inbox, or sign in with it.';
         } else if (!body.email_sent) {
-          document.getElementById('successMsg').textContent = 'You\'re registered! Your invite code will be emailed to you shortly.';
+          document.getElementById('successMsg').textContent = 'Registered! Your invite code will be emailed to you shortly.';
         }
         successEl.style.display = 'block';
         fetchCount();
@@ -1459,7 +1551,7 @@ setInterval(() => {
       errorEl.textContent = err.message;
       errorEl.style.display = 'block';
       submitBtn.disabled = false;
-      submitBtn.textContent = 'Request Early Access →';
+      submitBtn.textContent = 'Email me my invite code →';
     }
   });
 })();

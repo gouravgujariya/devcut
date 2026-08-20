@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { SponsorClient, EarningsSummary, WithdrawalRecord, SponsorLine } from "./sponsorClient";
+import { SponsorClient, EarningsSummary, WithdrawalRecord, SponsorLine, UpdateInfo, isNewerVersion } from "./sponsorClient";
 import { EarningsStore } from "./earningsStore";
 
 let panel: vscode.WebviewPanel | undefined;
@@ -9,8 +9,11 @@ const DEFAULT_MIN_WITHDRAW_PAISE = 5000; // ₹50 — mirrored from server; serv
 export async function showEarningsPanel(
   context: vscode.ExtensionContext,
   client: SponsorClient,
-  store: EarningsStore
+  store: EarningsStore,
+  focus?: "updates"
 ): Promise<void> {
+  // Never hardcoded — the panel has to say which build the user is actually on.
+  const running = String(context.extension.packageJSON.version ?? "0.0.0");
   if (panel) {
     panel.reveal();
   } else {
@@ -24,30 +27,36 @@ export async function showEarningsPanel(
     panel.webview.onDidReceiveMessage(async (msg) => {
       if (msg.command === "withdraw") {
         await vscode.commands.executeCommand("devcut.withdraw");
-        await render(client, store);
+        await render(client, store, running);
       } else if (msg.command === "setUpi") {
         await vscode.commands.executeCommand("devcut.setUpiId");
-        await render(client, store);
+        await render(client, store, running);
       } else if (msg.command === "refresh") {
-        await render(client, store);
+        await render(client, store, running);
       }
     }, null, context.subscriptions);
   }
-  await render(client, store);
+  await render(client, store, running, focus);
 }
 
-async function render(client: SponsorClient, store: EarningsStore): Promise<void> {
+async function render(
+  client: SponsorClient,
+  store: EarningsStore,
+  running: string,
+  focus?: "updates"
+): Promise<void> {
   if (!panel) return;
   panel.webview.html = loadingHtml();
-  const [earnings, history, me, sponsor] = await Promise.all([
+  const [earnings, history, me, sponsor, updates] = await Promise.all([
     client.fetchEarnings(),
     client.fetchWithdrawalHistory(),
     client.fetchMe(),
     client.fetchCurrentLine(), // read-only: impressions are a separate POST, so this pays nobody
+    client.fetchUpdates(),
   ]);
   if (earnings) store.setServerBalance(earnings.totalPaise);
   if (!panel) return; // closed while fetching
-  panel.webview.html = dashboardHtml(earnings, history, me?.user.upi_id, store, sponsor);
+  panel.webview.html = dashboardHtml(earnings, history, me?.user.upi_id, store, sponsor, updates, running, focus);
 }
 
 const esc = (s: unknown) =>
@@ -115,12 +124,53 @@ function sponsorCard(line: SponsorLine | undefined): string {
     </div>`;
 }
 
+/**
+ * Changelog card. Every field is operator-authored text arriving over HTTP, so it
+ * all goes through esc() — the CSP here allows inline styles and would happily
+ * run injected markup's event handlers.
+ */
+function updatesCard(info: UpdateInfo | undefined, running: string): string {
+  if (!info?.latest) return "";
+  const behind = isNewerVersion(info.latest, running);
+  const entries = (info.entries ?? [])
+    .map((e) => {
+      const isNew = isNewerVersion(e.version, running);
+      return `<div style="margin-bottom:14px">
+        <div class="row" style="justify-content:flex-start">
+          <strong>${esc(e.version)} — ${esc(e.title)}</strong>
+          ${isNew ? `<span class="pill pending">new</span>` : ""}
+          <span class="muted" style="font-size:.85em">${esc(e.date)}</span>
+        </div>
+        <ul>${(e.notes ?? []).map((n) => `<li>${esc(n)}</li>`).join("")}</ul>
+      </div>`;
+    })
+    .join("");
+
+  return `<div class="card" id="updates">
+      <div class="muted" style="margin-bottom:8px">Updates</div>
+      <p>${
+        behind
+          ? `You're on ${esc(running)} — <strong>${esc(info.latest)} is available</strong>. Download the new .vsix from the DevCut site, then run <em>Extensions: Install from VSIX…</em> and reload.`
+          : `You're up to date (${esc(running)}).`
+      }</p>
+      ${entries}
+    </div>`;
+}
+
+/** Opened from the update dot — jump straight to the changelog instead of the balance. */
+function focusScript(focus?: "updates"): string {
+  return focus ? `<script>document.getElementById('${focus}')?.scrollIntoView();</script>` : "";
+}
+
 function dashboardHtml(
   earnings: EarningsSummary | undefined,
   history: WithdrawalRecord[] | undefined,
   upiId: string | undefined,
   store: EarningsStore,
-  sponsor?: SponsorLine
+  sponsor: SponsorLine | undefined,
+  updates: UpdateInfo | undefined,
+  running: string,
+  focus?: "updates"
 ): string {
   // Offline fallback: local tally only, no cashout
   if (!earnings) {
@@ -132,7 +182,10 @@ function dashboardHtml(
         <p class="muted">${store.getImpressionCount()} impressions (local, unverified)</p>
         <button onclick="vscode.postMessage({command:'refresh'})">Retry</button>
       </div>
+      <!-- /v1/updates needs no auth, so it renders even when earnings can't -->
+      ${updatesCard(updates, running)}
       <script>const vscode = acquireVsCodeApi();</script>
+      ${focusScript(focus)}
     </body></html>`;
   }
 
@@ -196,6 +249,9 @@ function dashboardHtml(
         : `<p class="muted">No withdrawals yet. Earn ${rupees(min)} to unlock your first payout.</p>`}
     </div>
 
+    ${updatesCard(updates, running)}
+
     <script>const vscode = acquireVsCodeApi();</script>
+    ${focusScript(focus)}
   </body></html>`;
 }

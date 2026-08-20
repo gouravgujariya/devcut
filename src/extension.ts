@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { SponsorClient } from "./sponsorClient";
+import { SponsorClient, isNewerVersion } from "./sponsorClient";
 import { EarningsStore } from "./earningsStore";
 import { AuthStore } from "./authStore";
 import { AdRotator } from "./adRotator";
@@ -20,6 +20,16 @@ let profileTimer: NodeJS.Timeout | undefined;
 const PROFILE_DONE  = "devcut.profileDone";
 const PROFILE_SKIPS = "devcut.profileSkips";
 const COMPANY_DONE  = "devcut.companyDone";
+const UPDATE_SEEN   = "devcut.updateSeenVersion";
+
+// readyBar's resting state, restored when the update dot is dismissed.
+const READY_TEXT    = "$(megaphone)";
+const READY_TOOLTIP = "DevCut — click to test ad";
+
+// Set only while the red update dot is showing; the version showUpdates marks seen.
+let pendingUpdateVersion: string | undefined;
+// Guards in-flight callbacks that would otherwise touch disposed status bar items.
+let deactivated = false;
 
 // Maps terminal command prefixes → task type label sent to backend for targeting
 const TASK_TYPE_MAP: Array<[string, string]> = [
@@ -70,6 +80,7 @@ function shouldTrackCommand(cmd: string): boolean {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  deactivated = false;
   const config = vscode.workspace.getConfiguration("devcut");
 
   authStore   = new AuthStore(context);
@@ -108,8 +119,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   readyBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
   readyBar.name = "DevCut Ready";
-  readyBar.text = "$(megaphone)";
-  readyBar.tooltip = "DevCut — click to test ad";
+  readyBar.text = READY_TEXT;
+  readyBar.tooltip = READY_TOOLTIP;
   readyBar.command = "devcut.testAd";
   context.subscriptions.push(readyBar);
   readyBar.show();
@@ -118,12 +129,14 @@ export function activate(context: vscode.ExtensionContext) {
   // Show once: if user has never registered, tell them exactly what to do.
   if (!authStore.getUserId()) {
     vscode.window.showInformationMessage(
-      "⚡ DevCut: Earn ₹ while you wait on builds. Enter your invite code to activate.",
+      "⚡ DevCut: Earn ₹ while you wait on builds. Sign in to activate.",
+      "Sign in with GitHub",
       "Get Free Code →",
       "I Have a Code"
     ).then((action) => {
-      if (action === "Get Free Code →")  vscode.commands.executeCommand("devcut.openWebsite");
-      if (action === "I Have a Code")    vscode.commands.executeCommand("devcut.activate");
+      if (action === "Sign in with GitHub")  vscode.commands.executeCommand("devcut.signInWithGithub");
+      if (action === "Get Free Code →")      vscode.commands.executeCommand("devcut.openWebsite");
+      if (action === "I Have a Code")        vscode.commands.executeCommand("devcut.activate");
     });
   }
 
@@ -148,6 +161,19 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand("devcut.showEarnings", () => {
       showEarningsPanel(context, sponsorClient, earningsStore);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("devcut.showUpdates", async () => {
+      if (pendingUpdateVersion) {
+        await context.globalState.update(UPDATE_SEEN, pendingUpdateVersion);
+        pendingUpdateVersion = undefined;
+        readyBar.text = READY_TEXT;
+        readyBar.tooltip = READY_TOOLTIP;
+        readyBar.command = "devcut.testAd";
+      }
+      showEarningsPanel(context, sponsorClient, earningsStore, "updates");
     })
   );
 
@@ -190,19 +216,41 @@ export function activate(context: vscode.ExtensionContext) {
       });
       if (!code) return;
 
+      const normalizedCode = code.trim().toUpperCase();
+
       try {
-        const result = await sponsorClient.register(code.trim().toUpperCase());
+        const result = await sponsorClient.register(normalizedCode);
         await authStore.setTokens(result.accessToken, result.refreshToken, result.userId);
         vscode.window.showInformationMessage(
           "DevCut activated! You will start earning on your next build."
         );
         maybeAskProfile(context);
+        return;
+      } catch (err: any) {
+        // A code already used is the normal shape of a returning user (reinstall,
+        // new machine) — not a hard failure. Fall back to sign-in with that same
+        // code instead of dead-ending; most users never discover the separate
+        // "DevCut: Sign In" command.
+        if (err?.message !== "invalid_or_used_code") {
+          vscode.window.showErrorMessage(`DevCut: activation failed — ${err?.message || "unknown error"}`);
+          return;
+        }
+      }
+
+      try {
+        const result = await sponsorClient.login(normalizedCode);
+        await authStore.setTokens(result.accessToken, result.refreshToken, result.userId);
+        vscode.window.showInformationMessage(
+          "DevCut: Signed in successfully! You will resume earning on your next build."
+        );
       } catch (err: any) {
         const msg = err?.message || "unknown error";
         vscode.window.showErrorMessage(
-          msg === "invalid_or_used_code"
-            ? "Invalid or already-used invite code. Contact the DevCut team."
-            : `DevCut: activation failed — ${msg}`
+          msg === "invalid_code"
+            ? "Invalid invite code. Check for typos and try again."
+            : msg === "account_revoked"
+            ? "Your account has been revoked. Contact the DevCut team."
+            : `DevCut: sign-in failed — ${msg}`
         );
       }
     })
@@ -233,6 +281,45 @@ export function activate(context: vscode.ExtensionContext) {
             : msg === "account_revoked"
             ? "Your account has been revoked. Contact the DevCut team."
             : `DevCut: sign-in failed — ${msg}`
+        );
+      }
+    })
+  );
+
+  // ── Sign in with GitHub (no code to type or lose) ─────────────────────────
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("devcut.signInWithGithub", async () => {
+      let session: vscode.AuthenticationSession;
+      try {
+        session = await vscode.authentication.getSession("github", ["user:email"], { createIfNone: true });
+      } catch (err: any) {
+        // Cancelling the picker is not a failure, but a provider/network error is —
+        // swallowing both makes the button look like a dead no-op.
+        if (/cancel/i.test(String(err?.message ?? ""))) return;
+        vscode.window.showErrorMessage(
+          `DevCut: could not reach GitHub sign-in — ${err?.message || "unknown error"}`
+        );
+        return;
+      }
+
+      try {
+        const result = await sponsorClient.loginWithGithub(session.accessToken);
+        await authStore.setTokens(result.accessToken, result.refreshToken, result.userId);
+        vscode.window.showInformationMessage(
+          "DevCut: Signed in with GitHub! You will start earning on your next build."
+        );
+        maybeAskProfile(context);
+      } catch (err: any) {
+        const msg = err?.message || "unknown error";
+        vscode.window.showErrorMessage(
+          msg === "not_invited"
+            ? "This GitHub account's email isn't on the DevCut invite list yet. Get a free code first."
+            : msg === "account_revoked"
+            ? "Your account has been revoked. Contact the DevCut team."
+            : msg === "github_email_unavailable"
+            ? "DevCut: could not read an email from your GitHub account. Make sure it has a verified email."
+            : `DevCut: GitHub sign-in failed — ${msg}`
         );
       }
     })
@@ -453,6 +540,25 @@ export function activate(context: vscode.ExtensionContext) {
   // Deferred so it never lands on top of whatever the user opened VS Code to do.
   profileTimer = setTimeout(() => maybeAskProfile(context), 15_000);
 
+  // ── Update check ──────────────────────────────────────────────────────────
+  // Shipped as a private .vsix, so nothing prompts the user to update — we ask
+  // ourselves. Fire-and-forget on startup (never awaited) and once per activation:
+  // no polling timer, a reload is cheap enough to re-check.
+  sponsorClient.fetchUpdates().then((info) => {
+    // The window can close inside the request timeout, which disposes readyBar via
+    // context.subscriptions — touching it after that throws inside this .then().
+    if (deactivated || !info?.latest) return;
+    const running = String(context.extension.packageJSON.version ?? "0.0.0");
+    if (!isNewerVersion(info.latest, running)) return;
+    if (context.globalState.get<string>(UPDATE_SEEN) === info.latest) return;
+    // Emoji dot, not a codicon: a single codicon glyph can't be tinted red, and
+    // readyBar.backgroundColor would repaint the whole status bar pill.
+    pendingUpdateVersion = info.latest;
+    readyBar.text = `${READY_TEXT} 🔴`;
+    readyBar.tooltip = `DevCut ${info.latest} available — click to see what's new`;
+    readyBar.command = "devcut.showUpdates";
+  }).catch(() => { /* update nudge is best-effort — never surface it */ });
+
   // Auto-sync server balance once per day on startup
   const oneDayMs = 86_400_000;
   if (Date.now() - earningsStore.getServerBalanceFetchedAt() > oneDayMs) {
@@ -626,6 +732,8 @@ function onLongRunningEnd() {
 }
 
 export function deactivate() {
+  deactivated = true;
+  pendingUpdateVersion = undefined;
   clearAllTimers();
   if (activeRotator) {
     activeRotator.cancelFlash();

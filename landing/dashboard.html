@@ -15,6 +15,18 @@
     .payout-card { border-color: rgba(0,230,118,.28); }
     .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.2rem; margin-top: 1.2rem; }
     .split .card { margin-top: 0; }
+    button.btn-secondary { font-family: inherit; cursor: pointer; font-size: .88rem; padding: .55rem 1.1rem; }
+    a.btn-secondary.sm { font-size: .88rem; padding: .55rem 1.1rem; }
+    .acct-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding-top: .9rem; margin-top: .9rem; border-top: 1px solid var(--border); }
+    .acct-row:first-of-type { padding-top: 0; margin-top: 0; border-top: none; }
+    .acct-row .card-note { margin-top: .3rem; max-width: 46ch; }
+    .upd { padding-top: .9rem; margin-top: .9rem; border-top: 1px solid var(--border); }
+    .upd:first-child { padding-top: 0; margin-top: 0; border-top: none; }
+    .upd-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+    .upd-ver { font-family: 'Fira Code', 'Cascadia Code', monospace; font-size: .8rem; color: var(--green); }
+    .upd-date { color: var(--muted); font-size: .75rem; }
+    .upd-title { font-weight: 600; font-size: .92rem; margin-top: .25rem; }
+    .upd ul { margin: .4rem 0 0 1.1rem; color: var(--muted); font-size: .84rem; line-height: 1.6; }
   </style>
 </head>
 <body>
@@ -138,6 +150,49 @@
 
     <p class="card-note" style="margin-top:1.5rem;text-align:center;" id="sinceNote"></p>
   </div>
+
+  <!-- Account + What's New sit outside #dash on purpose: a failed analytics load must not hide them. -->
+  <div class="card" style="margin-top:1.2rem;">
+    <h2>Account</h2>
+
+    <div class="acct-row">
+      <div>
+        <div class="stat-label">Signed in as</div>
+        <div id="accEmail" style="font-weight:600;">—</div>
+      </div>
+    </div>
+
+    <div class="acct-row" id="ghLinked" style="display:none;">
+      <div>
+        <div style="font-weight:600;color:var(--green);">GitHub connected</div>
+        <div class="card-note">
+          Sign in with one click from now on. Unlinking is safe: your invite code keeps working, so this
+          can never lock you out.
+        </div>
+      </div>
+      <button class="btn-secondary" id="unlinkBtn" type="button">Unlink GitHub</button>
+    </div>
+
+    <div class="acct-row" id="ghUnlinked" style="display:none;">
+      <div>
+        <div style="font-weight:600;">GitHub not connected</div>
+        <div class="card-note">
+          Connects the GitHub account you authorise to <strong style="color:var(--text);">this</strong>
+          account, so signing in needs no code. If that GitHub account is already tied to a different
+          DevCut account, we will refuse rather than move anything.
+        </div>
+      </div>
+      <button class="btn-secondary sm" id="linkGhBtn" type="button">Link GitHub</button>
+    </div>
+
+    <div id="accountNote" class="card-note" style="display:none;margin-top:.9rem;"></div>
+  </div>
+
+  <div class="card">
+    <h2>What's New</h2>
+    <div id="updateList"></div>
+    <div id="updatesNote" class="card-note" style="margin-top:.8rem;">Loading the changelog…</div>
+  </div>
 </main>
 
 <footer>
@@ -168,6 +223,38 @@
     localStorage.removeItem('devcut_uid');
     location.replace('login.html');
   }
+  /* ── GitHub OAuth round-trip result (the link flow sends `next` back here) ─ */
+  // Drop the fragment: tokens in the address bar get bookmarked, screenshotted and
+  // pasted into shared links. Scrub before anything else touches the page.
+  function scrubHash() { history.replaceState(null, '', location.pathname + location.search); }
+
+  const OAUTH_ERRORS = {
+    not_invited: 'The verified email on that GitHub account is not on the invite list, so we could not link it.',
+    account_revoked: 'That GitHub account belongs to a revoked DevCut account.',
+    github_email_unavailable: 'GitHub did not give us a verified email address for that account, so we could not match it to yours.',
+    github_oauth_not_configured: 'GitHub linking is temporarily unavailable. Try again later.',
+    github_already_linked: 'That GitHub account is already connected to a different DevCut account. Nothing was changed.',
+    account_already_linked: 'This account is already connected to a different GitHub account. Unlink it first.',
+    invalid_state: 'That linking attempt expired or was started in another browser. Try again from this page.',
+  };
+  let oauthError = null;
+  let oauthLinked = false;
+
+  const frag = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if (frag.get('access') && frag.get('refresh')) {
+    localStorage.setItem('devcut_access',  frag.get('access'));
+    localStorage.setItem('devcut_refresh', frag.get('refresh'));
+    if (frag.get('uid')) localStorage.setItem('devcut_uid', frag.get('uid'));
+    scrubHash();
+  } else if (frag.get('linked')) {
+    // Link mode returns no tokens — the session that started it is still the one in use.
+    oauthLinked = true;
+    scrubHash();
+  } else if (frag.get('error')) {
+    oauthError = frag.get('error');
+    scrubHash();
+  }
+
   if (!tokens().access) { signOut(); return; }
 
   document.getElementById('logoutBtn').addEventListener('click', () => {
@@ -202,9 +289,13 @@
 
   // ponytail: one shared refresh promise so two parallel 401s don't burn two rotations.
   let refreshing = null;
-  async function api(path) {
+  async function api(path, method, body) {
     const call = () => fetch(BACKEND + path, {
-      headers: { Authorization: 'Bearer ' + tokens().access },
+      method: method || 'GET',
+      headers: body
+        ? { Authorization: 'Bearer ' + tokens().access, 'Content-Type': 'application/json' }
+        : { Authorization: 'Bearer ' + tokens().access },
+      body: body ? JSON.stringify(body) : undefined,
       cache: 'no-store',
     });
     let res = await call();
@@ -329,6 +420,141 @@
     });
     set('pPending', rupees(pendingPaise));
   }
+
+  /* ── account: email + GitHub link state ───────────────────────────────── */
+  const accNote = document.getElementById('accountNote');
+  function note(msg, bad) {
+    accNote.textContent = msg;
+    accNote.style.color = bad ? 'var(--orange)' : 'var(--muted)';
+    accNote.style.display = msg ? 'block' : 'none';
+  }
+
+  function renderGh(linked) {
+    document.getElementById('ghLinked').style.display   = linked ? 'flex' : 'none';
+    document.getElementById('ghUnlinked').style.display = linked ? 'none' : 'flex';
+  }
+
+  const unlinkBtn = document.getElementById('unlinkBtn');
+  const linkGhBtn = document.getElementById('linkGhBtn');
+
+  // Linking goes through the AUTHENTICATED start endpoint, not the sign-in one.
+  // Sign-in resolves whatever GitHub identity it is handed and returns a fresh
+  // session, so using it here could create a second account, burn an invite and
+  // swap the tab onto that other account while claiming it had "linked".
+  linkGhBtn.addEventListener('click', async () => {
+    linkGhBtn.disabled = true;
+    linkGhBtn.textContent = 'Redirecting…';
+    try {
+      const r = await api('/v1/auth/github/link/start', 'POST', { next: '/site/dashboard.html' });
+      if (!r || !r.url) throw new Error('no url');
+      location.href = r.url;
+    } catch (err) {
+      if (String(err.message) !== 'signed out') {
+        note('Could not start GitHub linking (' + err.message + '). Try again in a moment.', true);
+      }
+      linkGhBtn.disabled = false;
+      linkGhBtn.textContent = 'Link GitHub';
+    }
+  });
+
+  unlinkBtn.addEventListener('click', async () => {
+    if (!confirm('Unlink GitHub from this DevCut account?\n\nYou can still sign in with your invite code afterwards, and you can re-link GitHub any time.')) return;
+    unlinkBtn.disabled = true;
+    unlinkBtn.textContent = 'Unlinking…';
+    try {
+      await api('/v1/me/github', 'DELETE');
+    } catch (err) {
+      if (String(err.message) !== 'signed out') {
+        note('Could not unlink GitHub (' + err.message + '). Your account is unchanged — try again in a moment.', true);
+        unlinkBtn.disabled = false;
+        unlinkBtn.textContent = 'Unlink GitHub';
+      }
+      return;
+    }
+    unlinkBtn.disabled = false;
+    unlinkBtn.textContent = 'Unlink GitHub';
+    note('GitHub unlinked. Sign in with your invite code next time.');
+    renderGh(false);   // update in place, no reload
+  });
+
+  (async function loadAccount() {
+    if (oauthError) note(OAUTH_ERRORS[oauthError] || 'GitHub linking did not complete. Try again.', true);
+    let me;
+    try {
+      me = await api('/v1/me');
+    } catch (err) {
+      if (String(err.message) !== 'signed out') note('Could not load your account details right now.');
+      return;
+    }
+    const u = (me && me.user) || {};
+    set('accEmail', u.email || '—');
+    renderGh(!!u.github_linked);
+    if (!oauthError && oauthLinked) note('GitHub linked. You can sign in with it from now on.');
+  })();
+
+  /* ── what's new (public endpoint, so no auth and no sign-out on failure) ── */
+  (async function loadUpdates() {
+    let data;
+    try {
+      const res = await fetch(BACKEND + '/v1/updates', { cache: 'no-store' });
+      if (!res.ok) throw new Error(String(res.status));
+      data = await res.json();
+    } catch {
+      set('updatesNote', "Couldn't load the changelog right now.");
+      return;
+    }
+
+    const entries = (Array.isArray(data && data.entries) ? data.entries : [])
+      .slice()
+      .sort((a, b) => String(b.version || '').localeCompare(String(a.version || ''), undefined, { numeric: true }))
+      .slice(0, 4);   // ponytail: newest four; full history lives in the repo changelog
+
+    if (!entries.length) { set('updatesNote', 'No release notes yet.'); return; }
+
+    const host = document.getElementById('updateList');
+    entries.forEach(e => {
+      const box = document.createElement('div'); box.className = 'upd';
+
+      const head = document.createElement('div'); head.className = 'upd-head';
+      const ver = document.createElement('span'); ver.className = 'upd-ver';
+      ver.textContent = 'v' + String(e.version == null ? '?' : e.version);
+      head.appendChild(ver);
+      if (e.date) {
+        const d = document.createElement('span'); d.className = 'upd-date';
+        d.textContent = String(e.date);
+        head.appendChild(d);
+      }
+      if (e.critical) {
+        const b = document.createElement('span'); b.className = 'badge badge-pending';
+        b.textContent = 'important';
+        head.appendChild(b);
+      }
+      box.appendChild(head);
+
+      if (e.title) {
+        const t = document.createElement('div'); t.className = 'upd-title';
+        t.textContent = String(e.title);
+        box.appendChild(t);
+      }
+      if (Array.isArray(e.notes) && e.notes.length) {
+        const ul = document.createElement('ul');
+        e.notes.forEach(n => {
+          const li = document.createElement('li');
+          li.textContent = String(n);   // server-derived: textContent only
+          ul.appendChild(li);
+        });
+        box.appendChild(ul);
+      }
+      host.appendChild(box);
+    });
+
+    // DevCut ships as a private .vsix, so nothing auto-updates it — saying otherwise
+    // leaves people waiting for an update that never arrives.
+    const latest = data && data.latest;
+    set('updatesNote', latest
+      ? 'Latest extension version: ' + String(latest) + '. To update, download the new .vsix and run "Extensions: Install from VSIX…" in VS Code.'
+      : 'To update, download the latest .vsix and run "Extensions: Install from VSIX…" in VS Code.');
+  })();
 
   /* ── boot ─────────────────────────────────────────────────────────────── */
   (async function load() {

@@ -4,11 +4,57 @@ const { randomUUID, randomInt } = require("crypto");
 const { z } = require("zod");
 const db = require("./db");
 const { signAccessToken, getPublicJwk, signImpressionToken, verifyImpressionToken } = require("./auth");
-const { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit, authRateLimit } = require("./middleware");
+const { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit, authRateLimit, oauthRateLimit } = require("./middleware");
 const { Resend } = require("resend");
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 if (!resend) console.warn("[startup] RESEND_API_KEY not set — all emails disabled");
+
+// Browser OAuth (web dashboard only — the extension uses VS Code's own GitHub provider)
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID;
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://waitwage-production.up.railway.app";
+if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+  console.warn("[startup] GITHUB_CLIENT_ID/SECRET not set — browser GitHub sign-in disabled (extension sign-in still works)");
+}
+
+// One-time seed for changelog_entries (see db.js) — admin panel owns it from here on,
+// via POST/PUT/DELETE /api/updates. Only used if the table is still empty at boot.
+const CHANGELOG_SEED = [
+  {
+    version: "0.1.4",
+    date: "2026-08-20",
+    title: "GitHub sign-in",
+    notes: [
+      "Sign in with GitHub — no invite code to lose",
+      "One button now handles both new and returning users",
+      "Web dashboard gets the same sign-in as the extension",
+    ],
+    critical: false,
+  },
+  {
+    version: "0.1.3",
+    date: "2026-07-28",
+    title: "Earnings panel + safer sessions",
+    notes: [
+      "New earnings panel with daily, per-sponsor and per-task breakdowns",
+      "Web dashboard login",
+      "Single-flight token refresh — no more duplicate refresh storms",
+      "Impressions are credited from a signed token, so what you're shown is what you're paid",
+    ],
+    critical: false,
+  },
+  {
+    version: "0.1.2",
+    date: "2026-06-27",
+    title: "Onboarding",
+    notes: [
+      "Guided first-run onboarding",
+      "Ads only render once you're signed in",
+    ],
+    critical: false,
+  },
+];
 
 // Escape user-supplied strings before interpolating into email/admin HTML
 function escapeHtml(s) {
@@ -45,6 +91,17 @@ function canonicalEmail(email) {
   }
 }
 
+// Seed changelog_entries once — inserted oldest-first so id order (newest-last-inserted)
+// matches the hand-written newest-first array below it reading in reverse.
+if (db.prepare("SELECT COUNT(*) AS n FROM changelog_entries").get().n === 0) {
+  const insert = db.prepare(
+    "INSERT INTO changelog_entries (version, date, title, notes, critical) VALUES (?, ?, ?, ?, ?)"
+  );
+  for (const e of [...CHANGELOG_SEED].reverse()) {
+    insert.run(e.version, e.date, e.title, JSON.stringify(e.notes), e.critical ? 1 : 0);
+  }
+}
+
 const app = express();
 // Behind Railway's proxy — makes req.ip the real client IP so rate limits key correctly
 app.set("trust proxy", 1);
@@ -71,6 +128,36 @@ app.use("/v1", corsMw, globalRateLimit);
 // GET /v1/jwks  — public key for client-side token verification
 app.get("/v1/jwks", (req, res) => {
   res.json({ keys: [getPublicJwk()] });
+});
+
+// Row → wire shape: notes back to an array, critical back to a boolean.
+function changelogEntryOut(row) {
+  let notes;
+  try { notes = JSON.parse(row.notes); } catch { notes = []; }
+  return { version: row.version, date: row.date, title: row.title, notes, critical: !!row.critical };
+}
+
+// Compares each dot-separated part as an integer; a string compare would rank
+// "0.1.10" below "0.1.9". Mirrors isNewerVersion() in src/sponsorClient.ts.
+function versionIsNewer(a, b) {
+  const pa = String(a).split(".");
+  const pb = String(b).split(".");
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (parseInt(pa[i], 10) || 0) - (parseInt(pb[i], 10) || 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
+// GET /v1/updates  — extension changelog (public), so the client can nudge on a new version
+app.get("/v1/updates", (req, res) => {
+  const rows = db.prepare("SELECT * FROM changelog_entries ORDER BY id DESC").all();
+  const entries = rows.map(changelogEntryOut);
+  // `latest` is the highest version, NOT the newest row: the admin panel can post a
+  // backfilled entry or edit an old one, and taking entries[0] there would report an
+  // older version as latest — silently switching off every client's update prompt.
+  const latest = entries.reduce((max, e) => (versionIsNewer(e.version, max) ? e.version : max), "0.0.0");
+  res.json({ latest, entries });
 });
 
 // POST /v1/register  — exchange invite code for access + refresh tokens
@@ -124,17 +211,326 @@ app.post("/v1/login", authRateLimit, (req, res) => {
   res.json({ accessToken: signAccessToken(invite.used_by_user_id), refreshToken, userId: invite.used_by_user_id });
 });
 
+// Auth-grade email equivalence — NOT the same rule as canonicalEmail().
+// Gmail guarantees dev@, d.e.v@ and dev+tag@gmail.com are one mailbox (dots are
+// ignored and '+' is not a legal Gmail username character), so folding them is safe
+// even when the result decides WHICH ACCOUNT the caller gets. Every other domain is
+// left alone on purpose: `alice+devcut@corp.tld` can be a genuinely separate mailbox,
+// and folding it to alice@corp.tld would let its owner take over Alice's account.
+// canonicalEmail() keeps the looser rule for signup dedupe, where a false match
+// grants nothing but a resent invite code.
+function authEmailKey(email) {
+  const [local = "", domain = ""] = String(email).toLowerCase().trim().split("@");
+  if (domain === "gmail.com" || domain === "googlemail.com") {
+    return `${local.split("+")[0].replace(/\./g, "")}@${domain}`;
+  }
+  return `${local}@${domain}`;
+}
+const isGmailAddress = (e) => /@(gmail|googlemail)\.com$/.test(String(e).toLowerCase().trim());
+
+// Verify a GitHub access token and pull the identity we key accounts on.
+// Returns { ok: true, githubId, email } or { ok: false, status, error }.
+async function fetchGithubIdentity(githubAccessToken) {
+  const ghHeaders = { Authorization: `Bearer ${githubAccessToken}`, "User-Agent": "DevCut", Accept: "application/vnd.github+json" };
+
+  let ghUser;
+  try {
+    const r = await fetch("https://api.github.com/user", { headers: ghHeaders });
+    if (!r.ok) return { ok: false, status: 401, error: "invalid_github_token" };
+    ghUser = await r.json();
+  } catch (e) {
+    console.error("[auth/github] GitHub API unreachable:", e.message);
+    return { ok: false, status: 502, error: "github_unreachable" };
+  }
+
+  // The email decides which DevCut account the caller gets, so only a *verified*
+  // address is ever good enough. GET /user's profile `email` carries no verified
+  // flag of its own, so it never becomes the deciding value — /user/emails does,
+  // and the user:email scope both callers request is what makes it readable.
+  let email;
+  try {
+    const r = await fetch("https://api.github.com/user/emails", { headers: ghHeaders });
+    if (r.ok) {
+      const emails = await r.json();
+      if (Array.isArray(emails)) {
+        email = (emails.find(e => e.primary && e.verified) || emails.find(e => e.verified))?.email;
+      }
+    }
+  } catch (e) {
+    console.error("[auth/github] /user/emails fetch failed:", e.message);
+  }
+  if (!email) return { ok: false, status: 400, error: "github_email_unavailable" };
+
+  return { ok: true, githubId: String(ghUser.id), email: email.toLowerCase().trim() };
+}
+
+// Turn a GitHub access token into a DevCut user id: login if linked, link if the
+// email already has an account, register if the email holds an unused invite.
+// Shared by POST /v1/auth/github (extension) and the browser OAuth sign-in callback —
+// two transports, one account-resolution rule.
+// Returns { ok: true, userId } or { ok: false, status, error }; the caller issues tokens.
+async function resolveGithubIdentity(githubAccessToken) {
+  const id = await fetchGithubIdentity(githubAccessToken);
+  if (!id.ok) return id;
+  const { githubId, email } = id;
+  const authKey = authEmailKey(email);
+
+  // Already linked — straight login.
+  const byGithub = db.prepare("SELECT id, status FROM users WHERE github_id = ?").get(githubId);
+  if (byGithub) {
+    if (byGithub.status !== "active") return { ok: false, status: 403, error: "account_revoked" };
+    console.log(`[auth/github] login user=${byGithub.id} github=${githubId}`);
+    return { ok: true, userId: byGithub.id };
+  }
+
+  // Existing invite-code account with an equivalent email — link this identity to it.
+  let byEmail = db.prepare("SELECT id, status, github_id FROM users WHERE email = ?").get(email);
+  if (!byEmail && isGmailAddress(email)) {
+    // users.email stores the address exactly as the invite was issued to, so a Gmail
+    // dev who signed up as d.e.v@gmail.com but whose GitHub email reads dev@gmail.com
+    // misses the exact match and would get a bogus "not_invited" for their own account.
+    // Gmail only — see authEmailKey for why this must not be generalised.
+    // ponytail: scans the gmail rows and compares in JS. Fine at beta scale; add a
+    // stored normalized column if users ever gets large.
+    byEmail = db.prepare(
+      "SELECT id, status, github_id, email FROM users WHERE email LIKE '%@gmail.com' OR email LIKE '%@googlemail.com'"
+    ).all().find((u) => authEmailKey(u.email) === authKey);
+  }
+  if (byEmail) {
+    if (byEmail.status !== "active") return { ok: false, status: 403, error: "account_revoked" };
+    if (byEmail.github_id && byEmail.github_id !== githubId) {
+      // Bound to a different GitHub identity already — refuse rather than silently
+      // stealing the link and locking the original identity out of the account.
+      return { ok: false, status: 409, error: "account_already_linked" };
+    }
+    db.prepare("UPDATE users SET github_id = ? WHERE id = ?").run(githubId, byEmail.id);
+    console.log(`[auth/github] linked user=${byEmail.id} github=${githubId}`);
+    return { ok: true, userId: byEmail.id };
+  }
+
+  // Brand new identity — only allowed in if this email holds an unused invite.
+  // For gmail, email_canonical already equals authEmailKey (same dot/+ folding);
+  // for every other domain only the exact address counts, so a +tag variant can't
+  // claim someone else's invite.
+  const invite = isGmailAddress(email)
+    ? db.prepare("SELECT * FROM beta_invites WHERE (email_canonical = ? OR email = ?) AND used_at IS NULL").get(authKey, email)
+    : db.prepare("SELECT * FROM beta_invites WHERE email = ? AND used_at IS NULL").get(email);
+  if (!invite) return { ok: false, status: 403, error: "not_invited" };
+
+  const userId = randomUUID();
+  try {
+    db.transaction(() => {
+      db.prepare("INSERT INTO users (id, email, invite_code, company, github_id) VALUES (?, ?, ?, ?, ?)")
+        .run(userId, invite.email, invite.code, invite.company || null, githubId);
+      db.prepare("UPDATE beta_invites SET used_at = ?, used_by_user_id = ? WHERE code = ?")
+        .run(Math.floor(Date.now() / 1000), userId, invite.code);
+    })();
+  } catch (e) {
+    console.error("[auth/github] DB error:", e.message);
+    return { ok: false, status: 500, error: "registration_failed" };
+  }
+
+  console.log(`[auth/github] new user ${userId} via github=${githubId} invite=${invite.code}`);
+  return { ok: true, userId };
+}
+
+// Fresh session for a resolved user id
+function issueTokens(userId) {
+  const refreshToken = randomUUID();
+  db.prepare("INSERT INTO refresh_tokens (id, user_id) VALUES (?, ?)").run(refreshToken, userId);
+  return { accessToken: signAccessToken(userId), refreshToken, userId };
+}
+
+// POST /v1/auth/github  — sign in (or register, if invited) with a GitHub account
+// instead of an invite code. Client gets the access token from VS Code's built-in
+// `vscode.authentication.getSession('github', ...)` — no OAuth app secret needed here,
+// we just verify that token against the GitHub API ourselves before trusting it.
+app.post("/v1/auth/github", authRateLimit, async (req, res) => {
+  const parse = z.object({ accessToken: z.string().min(1) }).safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: "accessToken required" });
+
+  const result = await resolveGithubIdentity(parse.data.accessToken);
+  if (!result.ok) return res.status(result.status).json({ error: result.error });
+  res.json(issueTokens(result.userId));
+});
+
+// ─── Browser GitHub OAuth (web dashboard) ─────────────────────────────────────
+// The extension gets a token from VS Code; a browser has no such provider, so the
+// dashboard needs a real OAuth App round-trip.
+
+const OAUTH_DEFAULT_NEXT = "/site/login.html";
+
+// `next` becomes a redirect target with tokens attached — an attacker-supplied
+// "//evil.com" or "https://evil.com" would hand them the session. Site-relative only.
+// '#' and '?' are rejected too: `?next=/site/login.html%23x` would build
+// "...#x#access=…", which the client parses as the single key "x#access", so a real
+// session gets minted and then silently dropped on a page showing no error.
+function safeNext(next) {
+  const n = String(next || "");
+  if (!n.startsWith("/") || n.startsWith("//")) return OAUTH_DEFAULT_NEXT;
+  if (n.includes("\\") || n.includes(":") || n.includes("#") || n.includes("?")) return OAUTH_DEFAULT_NEXT;
+  return n;
+}
+
+// ponytail: in-memory OAuth state — dies on restart (user just retries) and breaks
+// across instances. Move to a DB row before running >1 dyno.
+const oauthStates = new Map(); // state -> { next, mode, userId, nonce, expires }
+
+function pruneOauthStates() {
+  const now = Date.now();
+  for (const [k, v] of oauthStates) if (v.expires < now) oauthStates.delete(k);
+}
+
+// The state cookie binds the callback to the browser that started the flow. Without
+// it, state alone proves nothing: an attacker can mint their own state, complete
+// GitHub auth, then feed the victim the callback URL so the victim's browser stores
+// the ATTACKER's tokens on our origin. Only the browser that got this cookie can
+// finish the exchange. SameSite=Lax still rides along on GitHub's top-level redirect.
+const OAUTH_COOKIE = "devcut_oauth";
+
+function setOauthCookie(res, nonce) {
+  const secure = PUBLIC_BASE_URL.startsWith("https://") ? "; Secure" : "";
+  res.setHeader("Set-Cookie",
+    `${OAUTH_COOKIE}=${nonce}; Path=/v1/auth/github; Max-Age=600; HttpOnly; SameSite=Lax${secure}`);
+}
+function clearOauthCookie(res) {
+  res.setHeader("Set-Cookie", `${OAUTH_COOKIE}=; Path=/v1/auth/github; Max-Age=0; HttpOnly; SameSite=Lax`);
+}
+function readOauthCookie(req) {
+  const raw = String(req.headers.cookie || "");
+  for (const part of raw.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === OAUTH_COOKIE) return v.join("=");
+  }
+  return "";
+}
+
+// Mints a state + cookie for either flow and returns GitHub's authorize URL.
+function beginOauth(res, { next, mode, userId }) {
+  pruneOauthStates();
+  const state = randomUUID();
+  const nonce = randomUUID();
+  oauthStates.set(state, { next, mode, userId, nonce, expires: Date.now() + 10 * 60_000 });
+  setOauthCookie(res, nonce);
+
+  const url = new URL("https://github.com/login/oauth/authorize");
+  url.searchParams.set("client_id", GITHUB_CLIENT_ID);
+  url.searchParams.set("scope", "user:email");
+  url.searchParams.set("redirect_uri", `${PUBLIC_BASE_URL}/v1/auth/github/callback`);
+  url.searchParams.set("state", state);
+  return url.toString();
+}
+
+// GET /v1/auth/github/start  — kick off sign-in (creates or signs into an account)
+app.get("/v1/auth/github/start", oauthRateLimit, (req, res) => {
+  if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+    return res.status(503).json({ error: "github_oauth_not_configured" });
+  }
+  res.redirect(302, beginOauth(res, { next: safeNext(req.query.next), mode: "signin" }));
+});
+
+// POST /v1/auth/github/link/start  — kick off LINKING for the already-signed-in user.
+// Authenticated, unlike sign-in: linking must attach to the session that asked for it,
+// so the callback can refuse anything that would resolve to a different account.
+// Returns the URL instead of redirecting because the caller is fetch(), not a nav.
+app.post("/v1/auth/github/link/start", requireAuth, oauthRateLimit, (req, res) => {
+  if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+    return res.status(503).json({ error: "github_oauth_not_configured" });
+  }
+  const next = safeNext(req.body && req.body.next);
+  res.json({ url: beginOauth(res, { next, mode: "link", userId: req.userId }) });
+});
+
+// GET /v1/auth/github/callback  — GitHub sends the user back here with a code
+app.get("/v1/auth/github/callback", oauthRateLimit, async (req, res) => {
+  pruneOauthStates();
+
+  const stateKey = String(req.query.state || "");
+  const entry = oauthStates.get(stateKey);
+  oauthStates.delete(stateKey); // single use
+  const next = entry && entry.expires > Date.now() ? entry.next : OAUTH_DEFAULT_NEXT;
+  const cookie = readOauthCookie(req);
+  clearOauthCookie(res);
+  // Tokens ride in the fragment, never the query string — fragments aren't sent to
+  // servers, so they stay out of access logs, referrers and proxy history.
+  const back = (frag) => res.redirect(302, `${next}#${frag}`);
+
+  if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) return back("error=github_oauth_not_configured");
+  if (!entry || entry.expires < Date.now()) return back("error=invalid_state");
+  if (!entry.nonce || cookie !== entry.nonce) return back("error=invalid_state");
+  if (!req.query.code) return back("error=missing_code");
+
+  let ghToken;
+  try {
+    const r = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json", "User-Agent": "DevCut" },
+      body: JSON.stringify({
+        client_id: GITHUB_CLIENT_ID,
+        client_secret: GITHUB_CLIENT_SECRET,
+        code: req.query.code,
+        redirect_uri: `${PUBLIC_BASE_URL}/v1/auth/github/callback`,
+      }),
+    });
+    ghToken = (await r.json()).access_token;
+  } catch (e) {
+    console.error("[auth/github] token exchange failed:", e.message);
+    return back("error=github_unreachable");
+  }
+  if (!ghToken) return back("error=code_exchange_failed");
+
+  // ── Link mode: attach this GitHub identity to the session that started the flow.
+  // Never creates an account, never consumes an invite, never issues tokens — so it
+  // cannot silently swap the user onto a different account the way sign-in would.
+  if (entry.mode === "link") {
+    const id = await fetchGithubIdentity(ghToken);
+    if (!id.ok) return back(`error=${id.error}`);
+
+    const owner = db.prepare("SELECT id FROM users WHERE github_id = ?").get(id.githubId);
+    if (owner && owner.id !== entry.userId) return back("error=github_already_linked");
+
+    const me = db.prepare("SELECT github_id, status FROM users WHERE id = ?").get(entry.userId);
+    if (!me || me.status !== "active") return back("error=account_revoked");
+    if (me.github_id && me.github_id !== id.githubId) return back("error=account_already_linked");
+
+    db.prepare("UPDATE users SET github_id = ? WHERE id = ?").run(id.githubId, entry.userId);
+    console.log(`[auth/github] linked (explicit) user=${entry.userId} github=${id.githubId}`);
+    return back("linked=1");
+  }
+
+  const result = await resolveGithubIdentity(ghToken);
+  if (!result.ok) return back(`error=${result.error}`);
+
+  const { accessToken, refreshToken, userId } = issueTokens(result.userId);
+  console.log(`[auth/github] browser login user=${userId} → ${next}`);
+  back(`access=${accessToken}&refresh=${refreshToken}&uid=${userId}`);
+});
+
 // GET /v1/me  — lightweight token validation + profile
 app.get("/v1/me", requireAuth, (req, res) => {
   const user = db.prepare(
     `SELECT id, email, upi_id, created_at, company,
-            experience_level, primary_stack, country, profile_done_at
+            experience_level, primary_stack, country, profile_done_at, github_id
      FROM users WHERE id = ?`
   ).get(req.userId);
+  // Clients only need to know whether GitHub is connected — the raw id is
+  // account-linking material, so it never leaves the server.
+  if (user) {
+    user.github_linked = !!user.github_id;
+    delete user.github_id;
+  }
   const team = db.prepare(
     "SELECT t.id, t.name, t.code FROM teams t JOIN team_members tm ON tm.team_id = t.id WHERE tm.user_id = ?"
   ).get(req.userId);
   res.json({ user, team: team || null });
+});
+
+// DELETE /v1/me/github  — unlink GitHub. Never gated: the invite code is still a
+// working credential, so unlinking can't lock anyone out of their account.
+app.delete("/v1/me/github", requireAuth, (req, res) => {
+  db.prepare("UPDATE users SET github_id = NULL WHERE id = ?").run(req.userId);
+  console.log(`[auth/github] unlinked user=${req.userId}`);
+  res.json({ ok: true });
 });
 
 // POST /v1/token/refresh  — exchange refresh token for new access + refresh tokens
@@ -651,6 +1047,11 @@ app.get("/v1/public/stats", (req, res) => {
   const activeDevs = db.prepare(
     "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE ts > unixepoch() - 86400"
   ).get().n;
+  // Money owed but not yet sent — shown alongside totalPaidOut so "our books" includes
+  // what's in flight, not just what's already settled.
+  const pendingPayouts = db.prepare(
+    "SELECT COUNT(*) AS n, COALESCE(SUM(amount_paise), 0) AS paise FROM withdrawals WHERE status = 'pending'"
+  ).get();
   const totalDevs = db.prepare("SELECT COUNT(*) as n FROM users WHERE status = 'active'").get().n;
   const totalSignups = db.prepare("SELECT COUNT(*) as n FROM beta_invites").get().n;
   const topTaskTypes = db.prepare(
@@ -671,6 +1072,7 @@ app.get("/v1/public/stats", (req, res) => {
   res.json({
     totalImpressions,
     totalPaidRupees: (totalPaidOut / 100).toFixed(2),
+    pendingPayouts: { count: pendingPayouts.n, totalRupees: (pendingPayouts.paise / 100).toFixed(2) },
     activeDevsToday: activeDevs,
     totalDevs,
     totalSignups,
@@ -1085,6 +1487,49 @@ app.post("/api/invites", (req, res) => {
   db.prepare("INSERT OR IGNORE INTO beta_invites (code, email, email_canonical) VALUES (?, ?, ?)")
     .run(code, parse.data.email, canonicalEmail(parse.data.email));
   res.json({ ok: true, code });
+});
+
+// Admin: post/edit/delete the changelog shown at GET /v1/updates (extension red dot + web dashboard)
+const changelogBody = z.object({
+  version:  z.string().min(1).max(32),
+  date:     z.string().min(1).max(32).optional(), // defaults to today, admin can backdate/override
+  title:    z.string().min(1).max(120),
+  notes:    z.array(z.string().min(1).max(300)).max(20),
+  critical: z.boolean().optional(),
+});
+
+app.get("/api/updates", (req, res) => {
+  const rows = db.prepare("SELECT * FROM changelog_entries ORDER BY id DESC").all();
+  res.json(rows.map(r => ({ id: r.id, ...changelogEntryOut(r), created_at: r.created_at })));
+});
+
+app.post("/api/updates", (req, res) => {
+  const parse = changelogBody.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: "invalid body", details: parse.error.flatten() });
+  const d = parse.data;
+  const date = d.date || new Date().toISOString().slice(0, 10);
+  const info = db.prepare(
+    "INSERT INTO changelog_entries (version, date, title, notes, critical) VALUES (?, ?, ?, ?, ?)"
+  ).run(d.version.trim(), date, d.title.trim(), JSON.stringify(d.notes), d.critical ? 1 : 0);
+  console.log(`[updates] posted ${d.version} "${d.title}"`);
+  res.json({ ok: true, id: info.lastInsertRowid });
+});
+
+app.put("/api/updates/:id", (req, res) => {
+  const parse = changelogBody.safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: "invalid body", details: parse.error.flatten() });
+  const d = parse.data;
+  const date = d.date || new Date().toISOString().slice(0, 10);
+  const info = db.prepare(
+    "UPDATE changelog_entries SET version=?, date=?, title=?, notes=?, critical=? WHERE id=?"
+  ).run(d.version.trim(), date, d.title.trim(), JSON.stringify(d.notes), d.critical ? 1 : 0, req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true });
+});
+
+app.delete("/api/updates/:id", (req, res) => {
+  db.prepare("DELETE FROM changelog_entries WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
 });
 
 // Admin: manage withdrawals
