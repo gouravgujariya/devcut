@@ -89,8 +89,8 @@ export class SponsorClient {
   }
 
   /**
-   * Definitive session-liveness check. `false` only on a real 401 (session dead —
-   * revoked or account disabled, since tokens never expire on their own). `undefined`
+   * Definitive session-liveness check. `false` only on a real 401/403 (session dead —
+   * revoked, banned, or account disabled, since tokens never expire on their own). `undefined`
    * means "couldn't tell" (offline, timeout, server error) — never treated as dead.
    */
   async isSessionAlive(): Promise<boolean | undefined> {
@@ -98,7 +98,16 @@ export class SponsorClient {
       const data = await this.request("GET", "/v1/me");
       return data ? true : undefined; // request() resolves undefined on network failure
     } catch (err: any) {
-      return err?.status === 401 ? false : undefined;
+      return err?.status === 401 || err?.status === 403 ? false : undefined;
+    }
+  }
+
+  /** Best-effort server-side session revoke on sign-out. Never throws. */
+  async logout(): Promise<void> {
+    try {
+      await this.request("DELETE", "/v1/logout");
+    } catch {
+      // Best-effort fire-and-forget.
     }
   }
 
@@ -162,7 +171,7 @@ export class SponsorClient {
   async register(inviteCode: string): Promise<{ token: string; userId: string }> {
     // request() now rejects with an Error whose message is the backend error code.
     // Network failures resolve to undefined — treat those as a generic failure.
-    const data = await this.request("POST", "/v1/register", { inviteCode }, { skipAuth: true });
+    const data = await this.request("POST", "/v1/register", { inviteCode }, { skipAuth: true, timeoutMs: 20000 });
     if (!data) throw new Error("Registration failed — could not reach backend");
     return JSON.parse(data) as { token: string; userId: string };
   }
@@ -170,7 +179,7 @@ export class SponsorClient {
   async login(inviteCode: string): Promise<{ token: string; userId: string }> {
     // request() rejects with an Error whose message is the backend error code
     // (e.g. "invalid_code", "account_revoked"). Network failures resolve to undefined.
-    const data = await this.request("POST", "/v1/login", { inviteCode }, { skipAuth: true });
+    const data = await this.request("POST", "/v1/login", { inviteCode }, { skipAuth: true, timeoutMs: 20000 });
     if (!data) throw new Error("Login failed — could not reach backend");
     return JSON.parse(data) as { token: string; userId: string };
   }
@@ -179,7 +188,7 @@ export class SponsorClient {
   async loginWithGithub(githubAccessToken: string): Promise<{ token: string; userId: string }> {
     // request() rejects with an Error whose message is the backend error code
     // (e.g. "not_invited", "account_revoked"). Network failures resolve to undefined.
-    const data = await this.request("POST", "/v1/auth/github", { accessToken: githubAccessToken }, { skipAuth: true });
+    const data = await this.request("POST", "/v1/auth/github", { accessToken: githubAccessToken }, { skipAuth: true, timeoutMs: 20000 });
     if (!data) throw new Error("GitHub sign-in failed — could not reach backend");
     return JSON.parse(data) as { token: string; userId: string };
   }
@@ -212,7 +221,7 @@ export class SponsorClient {
 
   async setUpiId(upiId: string): Promise<boolean> {
     try {
-      const data = await this.request("PUT", "/v1/profile/upi", { upiId });
+      const data = await this.request("PUT", "/v1/profile/upi", { upiId }, { timeoutMs: 20000 });
       return !!data;
     } catch {
       return false;
@@ -221,7 +230,7 @@ export class SponsorClient {
 
   async requestWithdrawal(): Promise<{ ok: boolean; amountPaise?: number; message?: string; error?: string } | undefined> {
     try {
-      const data = await this.request("POST", "/v1/withdraw");
+      const data = await this.request("POST", "/v1/withdraw", undefined, { timeoutMs: 20000 });
       if (!data) return undefined;
       return JSON.parse(data);
     } catch {
@@ -286,7 +295,7 @@ export class SponsorClient {
     method: "GET" | "POST" | "PUT" | "DELETE",
     path: string,
     body?: Record<string, unknown>,
-    opts?: { skipAuth?: boolean }
+    opts?: { skipAuth?: boolean; timeoutMs?: number }
   ): Promise<string | undefined> {
     const token = opts?.skipAuth ? undefined : await this.token?.();
 
@@ -303,7 +312,8 @@ export class SponsorClient {
           headers["Content-Length"] = Buffer.byteLength(payload);
         }
 
-        const req = lib.request(url, { method, headers, timeout: 3000 }, (res) => {
+        // 8s default: the Railway backend cold-starts and 3s killed every first request.
+        const req = lib.request(url, { method, headers, timeout: opts?.timeoutMs ?? 8000 }, (res) => {
           let raw = "";
           res.on("data", (chunk) => (raw += chunk));
           res.on("end", () => {

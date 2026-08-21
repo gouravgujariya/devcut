@@ -49,9 +49,10 @@ export class AuthStore {
     try {
       const backendUrl = vscode.workspace.getConfiguration("devcut").get<string>("backendUrl", "http://localhost:3000");
       fs.mkdirSync(this.context.globalStorageUri.fsPath, { recursive: true });
-      fs.writeFileSync(this.sessionFilePath(), JSON.stringify({ token, userId, backendUrl }));
+      fs.writeFileSync(this.sessionFilePath(), JSON.stringify({ token, userId, backendUrl }), { mode: 0o600 });
+      fs.chmodSync(this.sessionFilePath(), 0o600); // mode above only applies on create — fix pre-existing 664 mirrors
     } catch {
-      // Best-effort only — the uninstall revoke is a nicety, not a requirement.
+      // Best-effort only — the uninstall cleanup is a nicety, not a requirement.
     }
   }
 

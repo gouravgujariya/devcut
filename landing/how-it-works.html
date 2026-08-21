@@ -74,7 +74,7 @@
         <div class="big-step-num">01</div>
         <div class="big-step-content">
           <h3>📦 Install the extension</h3>
-          <p>One click from the VS Code Marketplace — or paste <code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">ext install devcut.devcut</code> in the command palette. The extension is open source (MIT), zero telemetry beyond impression counting, and stores nothing on your local machine beyond a pseudonymous user ID.</p>
+          <p>DevCut is in private beta, so it's not on the VS Code Marketplace yet — you install it from a <code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">.vsix</code> file. Download the file (link at the bottom of this page), press <code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">Ctrl+Shift+P</code> (⌘⇧P on Mac), run <strong style="color:var(--text);">Extensions: Install from VSIX…</strong>, pick the file, and reload the window. The extension is open source (MIT), zero telemetry beyond impression counting, and stores nothing on your local machine beyond a pseudonymous user ID.</p>
         </div>
       </div>
 
@@ -223,16 +223,18 @@
     <div style="
       background:var(--surface2);border:1px solid var(--border);
       border-radius:12px;padding:1.2rem 1.5rem;
-      display:flex;align-items:center;justify-content:space-between;gap:1rem;
-      font-family:'Fira Code','Cascadia Code',monospace;font-size:1rem;
-      max-width:480px;margin:0 auto;
+      max-width:480px;margin:0 auto;text-align:left;
     ">
-      <span><span style="color:var(--green);">ext install</span> <span style="color:var(--text);">devcut.devcut</span></span>
-      <button id="copyBtn" onclick="copyCmd()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:.35rem .75rem;font-size:.8rem;cursor:pointer;transition:all .2s;font-family:inherit;">Copy</button>
+      <p style="color:var(--text);font-weight:700;margin-bottom:.6rem;">Install (30 seconds)</p>
+      <p style="color:var(--muted);font-size:.9rem;margin-bottom:.8rem;">DevCut is in private beta, so it's not on the Marketplace yet. You install it from a file:</p>
+      <ol style="color:var(--muted);font-size:.9rem;line-height:1.9;padding-left:1.2rem;margin-bottom:1rem;">
+        <li><strong style="color:var(--text);">Download the extension</strong> (.vsix) below.</li>
+        <li>In VS Code press <code style="background:var(--surface);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">Ctrl+Shift+P</code> (⌘⇧P on Mac) and run <strong style="color:var(--text);">Extensions: Install from VSIX…</strong></li>
+        <li>Pick the file you downloaded, then reload the window.</li>
+      </ol>
+      <!-- TODO(deploy): host devcut-latest.vsix at this path (or point href at GitHub Releases). The .vsix is gitignored, so hosting it is a deploy decision — see handoff notes. -->
+      <div style="text-align:center;"><a class="btn-primary" href="/site/devcut-latest.vsix" download>⬇ Download DevCut (.vsix)</a></div>
     </div>
-    <p style="color:var(--muted);font-size:.82rem;margin-top:1rem;">
-      Or search <strong style="color:var(--text);">"DevCut"</strong> in the Extensions panel (Ctrl+Shift+X).
-    </p>
   </div>
 </section>
 
@@ -291,17 +293,6 @@
   window.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
   init();draw();
 })();
-
-/* ── COPY BUTTON ── */
-function copyCmd() {
-  navigator.clipboard.writeText('ext install devcut.devcut').then(() => {
-    const btn = document.getElementById('copyBtn');
-    btn.textContent = 'Copied ✓';
-    btn.style.color = 'var(--green)';
-    btn.style.borderColor = 'var(--green)';
-    setTimeout(() => { btn.textContent = 'Copy'; btn.style.color = ''; btn.style.borderColor = ''; }, 2000);
-  });
-}
 
 /* ── SCROLL REVEAL ── */
 const revealEls = document.querySelectorAll('.faq-item, .big-step');

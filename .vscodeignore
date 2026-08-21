@@ -20,6 +20,7 @@ docs/
 .claude/
 graphify-out/
 scripts/
+!scripts/uninstall.js
 tsconfig.json
 railway.toml
 competition.ini
