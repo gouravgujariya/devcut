@@ -1,5 +1,4 @@
-const { verifyAccessToken } = require("./auth");
-const { timingSafeEqual } = require("crypto");
+const { timingSafeEqual, createHash } = require("crypto");
 const rateLimit = require("express-rate-limit");
 
 // Lazily load db to avoid circular require at module load time
@@ -9,23 +8,29 @@ function getDb() {
   return _db;
 }
 
+function hashToken(token) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+// Session tokens are opaque, permanent (no expiry/rotation) and DB-backed — see
+// the `sessions` table in db.js. Valid iff a non-revoked row exists whose hash
+// matches and whose user is still active.
 function requireAuth(req, res, next) {
   const header = req.headers["authorization"];
   if (!header || !header.startsWith("Bearer ")) {
     return res.status(401).json({ error: "missing_token" });
   }
   const token = header.slice(7);
-  try {
-    const claims = verifyAccessToken(token);
-    const user = getDb().prepare("SELECT status FROM users WHERE id = ?").get(claims.sub);
-    if (!user) return res.status(401).json({ error: "user_not_found" });
-    if (user.status !== "active") return res.status(403).json({ error: "account_revoked" });
-    req.userId = claims.sub;
-    next();
-  } catch (e) {
-    const code = e.name === "TokenExpiredError" ? "token_expired" : "invalid_token";
-    return res.status(401).json({ error: code });
-  }
+  const row = getDb().prepare(
+    `SELECT s.id AS session_id, s.user_id, u.status
+     FROM sessions s JOIN users u ON u.id = s.user_id
+     WHERE s.token_hash = ? AND s.revoked_at IS NULL`
+  ).get(hashToken(token));
+  if (!row) return res.status(401).json({ error: "invalid_token" });
+  if (row.status !== "active") return res.status(403).json({ error: "account_revoked" });
+  req.userId = row.user_id;
+  req.sessionId = row.session_id;
+  next();
 }
 
 // Fails closed: no ADMIN_KEY → no admin API, in every environment.
@@ -64,7 +69,7 @@ const globalRateLimit = rateLimit({
   legacyHeaders: false,
 });
 
-// Tighter limit for credential endpoints (register/login/refresh) — slows
+// Tighter limit for credential endpoints (register/login) — slows
 // invite-code brute force to uselessness.
 const authRateLimit = rateLimit({
   windowMs: 60_000,

@@ -75,8 +75,6 @@ export interface TeamInfo {
  */
 export class SponsorClient {
   private token: (() => Promise<string | undefined>) | undefined;
-  private onAuthExpired?: () => Promise<boolean>;
-  private refreshInFlight?: Promise<boolean>;
 
   constructor(
     private backendUrl: string,
@@ -90,22 +88,18 @@ export class SponsorClient {
     this.token = fn;
   }
 
-  /** Called when the access token is rejected mid-session. Should refresh + store new tokens; returns true on success. */
-  setAuthRefresher(fn: () => Promise<boolean>): void {
-    this.onAuthExpired = fn;
-  }
-
   /**
-   * Single-flight token refresh — the only entry point that should ever trigger one.
-   * Refresh tokens rotate on use, so two concurrent refreshes race: the loser sends
-   * an already-revoked token and gets a false "session expired". Callers (startup
-   * check, mid-request 401 handling) must all funnel through here, not call
-   * refreshAccessToken() directly, so they share the same in-flight attempt.
+   * Definitive session-liveness check. `false` only on a real 401 (session dead —
+   * revoked or account disabled, since tokens never expire on their own). `undefined`
+   * means "couldn't tell" (offline, timeout, server error) — never treated as dead.
    */
-  async refreshIfNeeded(): Promise<boolean> {
-    if (!this.onAuthExpired) return false;
-    this.refreshInFlight ??= this.onAuthExpired().finally(() => (this.refreshInFlight = undefined));
-    return this.refreshInFlight;
+  async isSessionAlive(): Promise<boolean | undefined> {
+    try {
+      const data = await this.request("GET", "/v1/me");
+      return data ? true : undefined; // request() resolves undefined on network failure
+    } catch (err: any) {
+      return err?.status === 401 ? false : undefined;
+    }
   }
 
   /** `idle` asks the server for the lower-paying idle inventory. */
@@ -165,40 +159,29 @@ export class SponsorClient {
 
   // ── Auth ─────────────────────────────────────────────────────────────────
 
-  async register(inviteCode: string): Promise<{ accessToken: string; refreshToken: string; userId: string }> {
+  async register(inviteCode: string): Promise<{ token: string; userId: string }> {
     // request() now rejects with an Error whose message is the backend error code.
     // Network failures resolve to undefined — treat those as a generic failure.
     const data = await this.request("POST", "/v1/register", { inviteCode }, { skipAuth: true });
     if (!data) throw new Error("Registration failed — could not reach backend");
-    return JSON.parse(data) as { accessToken: string; refreshToken: string; userId: string };
+    return JSON.parse(data) as { token: string; userId: string };
   }
 
-  async login(inviteCode: string): Promise<{ accessToken: string; refreshToken: string; userId: string }> {
+  async login(inviteCode: string): Promise<{ token: string; userId: string }> {
     // request() rejects with an Error whose message is the backend error code
     // (e.g. "invalid_code", "account_revoked"). Network failures resolve to undefined.
     const data = await this.request("POST", "/v1/login", { inviteCode }, { skipAuth: true });
     if (!data) throw new Error("Login failed — could not reach backend");
-    return JSON.parse(data) as { accessToken: string; refreshToken: string; userId: string };
+    return JSON.parse(data) as { token: string; userId: string };
   }
 
-  /** Alternative to invite-code login: exchange a GitHub access token (from vscode.authentication) for our JWT pair. */
-  async loginWithGithub(githubAccessToken: string): Promise<{ accessToken: string; refreshToken: string; userId: string }> {
+  /** Alternative to invite-code login: exchange a GitHub access token (from vscode.authentication) for our session token. */
+  async loginWithGithub(githubAccessToken: string): Promise<{ token: string; userId: string }> {
     // request() rejects with an Error whose message is the backend error code
     // (e.g. "not_invited", "account_revoked"). Network failures resolve to undefined.
     const data = await this.request("POST", "/v1/auth/github", { accessToken: githubAccessToken }, { skipAuth: true });
     if (!data) throw new Error("GitHub sign-in failed — could not reach backend");
-    return JSON.parse(data) as { accessToken: string; refreshToken: string; userId: string };
-  }
-
-  async refreshAccessToken(refreshToken: string): Promise<{ accessToken: string; refreshToken: string } | undefined> {
-    // Does NOT use the Authorization header — the refresh token is the credential.
-    try {
-      const data = await this.request("POST", "/v1/token/refresh", { refreshToken }, { skipAuth: true });
-      if (!data) return undefined;
-      return JSON.parse(data) as { accessToken: string; refreshToken: string };
-    } catch {
-      return undefined;
-    }
+    return JSON.parse(data) as { token: string; userId: string };
   }
 
   async fetchMe(): Promise<{ user: { id: string; email: string; upi_id?: string }; team: TeamInfo | null } | undefined> {
@@ -305,24 +288,6 @@ export class SponsorClient {
     body?: Record<string, unknown>,
     opts?: { skipAuth?: boolean }
   ): Promise<string | undefined> {
-    try {
-      return await this.requestOnce(method, path, body, opts);
-    } catch (err: any) {
-      // Access tokens live 1 day but VS Code windows live longer — refresh once and retry.
-      const authFailed = err?.message === "token_expired" || err?.message === "invalid_token";
-      if (authFailed && !opts?.skipAuth && (await this.refreshIfNeeded())) {
-        return this.requestOnce(method, path, body, opts);
-      }
-      throw err;
-    }
-  }
-
-  private async requestOnce(
-    method: "GET" | "POST" | "PUT" | "DELETE",
-    path: string,
-    body?: Record<string, unknown>,
-    opts?: { skipAuth?: boolean }
-  ): Promise<string | undefined> {
     const token = opts?.skipAuth ? undefined : await this.token?.();
 
     return new Promise((resolve, reject) => {
@@ -351,9 +316,9 @@ export class SponsorClient {
               try {
                 const parsed = JSON.parse(raw) as { error?: string; message?: string };
                 const code = parsed.error ?? parsed.message ?? `http_${status}`;
-                reject(new Error(code));
+                reject(Object.assign(new Error(code), { status }));
               } catch {
-                reject(new Error(`http_${status}`));
+                reject(Object.assign(new Error(`http_${status}`), { status }));
               }
             }
           });

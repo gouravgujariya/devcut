@@ -79,6 +79,24 @@ function shouldTrackCommand(cmd: string): boolean {
   return detectTaskType(cmd) !== undefined;
 }
 
+/**
+ * Tries to recover a dead session without bothering the user: if VS Code already
+ * has a cached GitHub session, exchange it for a fresh DevCut token — the same
+ * exchange devcut.signInWithGithub does, just non-interactive (createIfNone: false
+ * means this never pops a picker). Returns false (no UI shown) if nothing cached.
+ */
+async function attemptSilentRecovery(context: vscode.ExtensionContext): Promise<boolean> {
+  const session = await vscode.authentication.getSession("github", ["user:email"], { createIfNone: false });
+  if (!session) return false;
+  try {
+    const result = await sponsorClient.loginWithGithub(session.accessToken);
+    await authStore.setTokens(result.token, result.userId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   deactivated = false;
   const config = vscode.workspace.getConfiguration("devcut");
@@ -91,18 +109,6 @@ export function activate(context: vscode.ExtensionContext) {
     earningsStore.getUserId(),
     () => authStore.getToken()
   );
-
-  // Mid-session token refresh: access tokens last 1 day, editor windows last longer.
-  // Without this, earnings silently stop after 24h until the next reload.
-  sponsorClient.setAuthRefresher(async () => {
-    const rt = await authStore.getRefreshToken();
-    if (!rt) return false;
-    const result = await sponsorClient.refreshAccessToken(rt);
-    if (!result?.accessToken) return false;
-    await authStore.setAccessToken(result.accessToken);
-    await authStore.setRefreshToken(result.refreshToken);
-    return true;
-  });
 
   // ── Status bar items ──────────────────────────────────────────────────────
 
@@ -220,7 +226,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       try {
         const result = await sponsorClient.register(normalizedCode);
-        await authStore.setTokens(result.accessToken, result.refreshToken, result.userId);
+        await authStore.setTokens(result.token, result.userId);
         vscode.window.showInformationMessage(
           "DevCut activated! You will start earning on your next build."
         );
@@ -239,7 +245,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       try {
         const result = await sponsorClient.login(normalizedCode);
-        await authStore.setTokens(result.accessToken, result.refreshToken, result.userId);
+        await authStore.setTokens(result.token, result.userId);
         vscode.window.showInformationMessage(
           "DevCut: Signed in successfully! You will resume earning on your next build."
         );
@@ -269,7 +275,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       try {
         const result = await sponsorClient.login(code.trim().toUpperCase());
-        await authStore.setTokens(result.accessToken, result.refreshToken, result.userId);
+        await authStore.setTokens(result.token, result.userId);
         vscode.window.showInformationMessage(
           "DevCut: Signed in successfully! You will resume earning on your next build."
         );
@@ -305,7 +311,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       try {
         const result = await sponsorClient.loginWithGithub(session.accessToken);
-        await authStore.setTokens(result.accessToken, result.refreshToken, result.userId);
+        await authStore.setTokens(result.token, result.userId);
         vscode.window.showInformationMessage(
           "DevCut: Signed in with GitHub! You will start earning on your next build."
         );
@@ -567,20 +573,21 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
 
-  // Silently refresh the 1-day access token on startup if it has expired.
-  // Goes through refreshIfNeeded() (not refreshAccessToken() directly) so this
-  // shares the single-flight guard with any refresh a concurrent request triggers —
-  // otherwise both would race the same rotating refresh token and one would lose.
-  if (authStore.isAccessTokenExpired()) {
-    sponsorClient.refreshIfNeeded().then(async (ok) => {
-      if (!ok) {
-        const action = await vscode.window.showWarningMessage(
-          "DevCut: Session expired. Re-enter your invite code to continue earning.",
-          "Re-activate"
-        );
-        if (action === "Re-activate") {
-          vscode.commands.executeCommand("devcut.activate");
-        }
+  // Tokens are permanent now — no expiry to check locally. Instead, do one real
+  // liveness check on startup so a revoked/disabled account is caught early rather
+  // than surfacing as a confusing "could not reach backend" on the next ad request.
+  if (authStore.getUserId()) {
+    sponsorClient.isSessionAlive().then(async (alive) => {
+      if (alive !== false) return; // true, or undefined (network issue) — don't act
+      if (await attemptSilentRecovery(context)) return;
+      const action = await vscode.window.showWarningMessage(
+        "DevCut: Session expired. Re-enter your invite code to continue earning.",
+        "Re-activate", "Sign in with GitHub"
+      );
+      if (action === "Re-activate") {
+        vscode.commands.executeCommand("devcut.activate");
+      } else if (action === "Sign in with GitHub") {
+        vscode.commands.executeCommand("devcut.signInWithGithub");
       }
     });
   }

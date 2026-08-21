@@ -36,7 +36,7 @@ async function main() {
   db.prepare("INSERT INTO beta_invites (code, email, company) VALUES (?, ?, ?)").run("DCUT-TEST-CODE-01", "test@devcut.co.in", "Acme University");
   const reg = await api("POST", "/v1/register", { inviteCode: "DCUT-TEST-CODE-01" });
   assert.strictEqual(reg.status, 200, "register failed: " + JSON.stringify(reg.body));
-  const { accessToken: token, userId } = reg.body;
+  const { token, userId } = reg.body;
 
   // ── POST /v1/me/profile persists, GET /v1/me exposes it ───────────────────
   const prof = await api("POST", "/v1/me/profile", { experienceLevel: "senior", primaryStack: "go", country: "India" }, token);
@@ -177,7 +177,7 @@ async function main() {
   db.prepare("INSERT INTO beta_invites (code, email) VALUES (?, ?)").run("DCUT-TEST-CODE-02", "test2@devcut.co.in");
   const reg2 = await api("POST", "/v1/register", { inviteCode: "DCUT-TEST-CODE-02" });
   assert.strictEqual(reg2.status, 200, "second register failed: " + JSON.stringify(reg2.body));
-  const noCompanyLine = await api("GET", "/v1/sponsor-line", undefined, reg2.body.accessToken);
+  const noCompanyLine = await api("GET", "/v1/sponsor-line", undefined, reg2.body.token);
   assert.strictEqual(noCompanyLine.body, null, "sponsor-line must be null when company is unset");
 
   // ── total (lifetime) budget cap ─────────────────────────────────────────────
@@ -243,6 +243,33 @@ async function main() {
   const wd = await api("POST", "/v1/withdraw", undefined, token);
   assert.strictEqual(wd.status, 400);
   assert.strictEqual(wd.body.error, "upi_recently_changed", "fresh UPI must block withdrawal: " + JSON.stringify(wd.body));
+
+  // ── sessions: login mints a distinct token; list/revoke are per-session ────
+  const loginA = await api("POST", "/v1/login", { inviteCode: "DCUT-TEST-CODE-01" });
+  assert.strictEqual(loginA.status, 200, "login failed: " + JSON.stringify(loginA.body));
+  assert.ok(loginA.body.token && loginA.body.token !== token, "login must mint a distinct session token");
+
+  const loginB = await api("POST", "/v1/login", { inviteCode: "DCUT-TEST-CODE-01" });
+  assert.ok(loginB.body.token && loginB.body.token !== loginA.body.token, "each login must mint its own session token");
+
+  const sessionsA = await api("GET", "/v1/me/sessions", undefined, loginA.body.token);
+  const sessionA = sessionsA.body.find(s => s.current);
+  assert.ok(sessionA, "sessions list must mark the presenting session as current");
+  assert.ok(!("token_hash" in sessionA), "sessions list must never leak token_hash");
+
+  const sessionsB = await api("GET", "/v1/me/sessions", undefined, loginB.body.token);
+  assert.ok(sessionsB.body.length >= 3, "sessions list must include every live session for the user");
+
+  // Cross-session revoke ("lost my laptop"): B revokes A's session by id.
+  assert.deepStrictEqual((await api("DELETE", `/v1/me/sessions/${sessionA.id}`, undefined, loginB.body.token)).body, { ok: true });
+  assert.strictEqual((await api("GET", "/v1/me", undefined, loginA.body.token)).status, 401, "session revoked via /v1/me/sessions/:id must be rejected");
+  assert.strictEqual((await api("GET", "/v1/me", undefined, loginB.body.token)).status, 200, "revoking one session must not affect its siblings");
+  assert.strictEqual((await api("DELETE", `/v1/me/sessions/${sessionA.id}`, undefined, loginB.body.token)).status, 404, "revoking an already-revoked session must 404");
+
+  // Self-revoke via logout affects only the presented session.
+  assert.deepStrictEqual((await api("DELETE", "/v1/logout", undefined, loginB.body.token)).body, { ok: true });
+  assert.strictEqual((await api("GET", "/v1/me", undefined, loginB.body.token)).status, 401, "logged-out session must be rejected");
+  assert.strictEqual((await api("GET", "/v1/me", undefined, token)).status, 200, "unrelated sessions must survive another session's logout");
 
   // ── admin auth fails closed ────────────────────────────────────────────────
   const noKey = await fetch(base + "/api/overview");

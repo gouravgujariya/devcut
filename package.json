@@ -2,7 +2,7 @@
   "name": "devcut-for-vscode",
   "displayName": "DevCut: Earn While You Build",
   "description": "Shows a sponsored line in your status bar while you wait on builds, installs, and tests. You get a share of the revenue.",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "publisher": "devcut",
   "icon": "logo.png",
   "license": "MIT",
@@ -133,7 +133,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "package": "vsce package"
+    "package": "vsce package",
+    "vscode:uninstall": "node ./scripts/uninstall.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
