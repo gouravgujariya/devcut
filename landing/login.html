@@ -141,9 +141,8 @@
   function scrubHash() { history.replaceState(null, '', location.pathname + location.search); }
 
   const frag = new URLSearchParams(location.hash.replace(/^#/, ''));
-  if (frag.get('access') && frag.get('refresh')) {
-    localStorage.setItem('devcut_access',  frag.get('access'));
-    localStorage.setItem('devcut_refresh', frag.get('refresh'));
+  if (frag.get('token')) {
+    localStorage.setItem('devcut_token', frag.get('token'));
     if (frag.get('uid')) localStorage.setItem('devcut_uid', frag.get('uid'));
     scrubHash();
     location.replace('dashboard.html');
@@ -152,7 +151,7 @@
   if (frag.get('error')) {
     scrubHash();
     oauthFail(frag.get('error'));
-  } else if (localStorage.getItem('devcut_access')) {
+  } else if (localStorage.getItem('devcut_token')) {
     // Already signed in? go straight through.
     location.replace('dashboard.html');
     return;
@@ -198,12 +197,11 @@
       }
       return fail(body.message || body.error || 'Sign-in failed. Please try again.');
     }
-    if (!body.accessToken || !body.refreshToken) {
+    if (!body.token) {
       return fail('Sign-in failed. Please try again.');
     }
 
-    localStorage.setItem('devcut_access',  body.accessToken);
-    localStorage.setItem('devcut_refresh', body.refreshToken);
+    localStorage.setItem('devcut_token', body.token);
     if (body.userId) localStorage.setItem('devcut_uid', body.userId);
     location.replace('dashboard.html');
   });

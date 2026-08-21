@@ -211,15 +211,12 @@
   const BACKEND = 'https://waitwage-production.up.railway.app';
 
   /* ── auth ─────────────────────────────────────────────────────────────── */
-  function tokens() {
-    return {
-      access:  localStorage.getItem('devcut_access'),
-      refresh: localStorage.getItem('devcut_refresh'),
-    };
-  }
+  // Permanent opaque session token — no expiry, no rotation, no refresh call.
+  // It's valid until explicitly revoked (logout / account deletion / another
+  // session revoking it via DELETE /v1/me/sessions/:id).
+  function token() { return localStorage.getItem('devcut_token'); }
   function signOut() {
-    localStorage.removeItem('devcut_access');
-    localStorage.removeItem('devcut_refresh');
+    localStorage.removeItem('devcut_token');
     localStorage.removeItem('devcut_uid');
     location.replace('login.html');
   }
@@ -241,9 +238,8 @@
   let oauthLinked = false;
 
   const frag = new URLSearchParams(location.hash.replace(/^#/, ''));
-  if (frag.get('access') && frag.get('refresh')) {
-    localStorage.setItem('devcut_access',  frag.get('access'));
-    localStorage.setItem('devcut_refresh', frag.get('refresh'));
+  if (frag.get('token')) {
+    localStorage.setItem('devcut_token', frag.get('token'));
     if (frag.get('uid')) localStorage.setItem('devcut_uid', frag.get('uid'));
     scrubHash();
   } else if (frag.get('linked')) {
@@ -255,56 +251,30 @@
     scrubHash();
   }
 
-  if (!tokens().access) { signOut(); return; }
+  if (!token()) { signOut(); return; }
 
   document.getElementById('logoutBtn').addEventListener('click', () => {
-    const t = tokens();
     // fire-and-forget: revoke server-side, but never block sign-out on it
-    if (t.refresh) {
-      fetch(BACKEND + '/v1/logout', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + t.access },
-        body: JSON.stringify({ refreshToken: t.refresh }),
-      }).catch(() => {});
-    }
+    fetch(BACKEND + '/v1/logout', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer ' + token() },
+    }).catch(() => {});
     signOut();
   });
 
-  async function refreshTokens() {
-    const t = tokens();
-    if (!t.refresh) return false;
-    const res = await fetch(BACKEND + '/v1/token/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: t.refresh }),
-    }).catch(() => null);
-    if (!res || !res.ok) return false;
-    const body = await res.json().catch(() => ({}));
-    if (!body.accessToken || !body.refreshToken) return false;
-    // refresh tokens rotate — the old one is dead the moment this succeeds
-    localStorage.setItem('devcut_access', body.accessToken);
-    localStorage.setItem('devcut_refresh', body.refreshToken);
-    return true;
-  }
-
-  // ponytail: one shared refresh promise so two parallel 401s don't burn two rotations.
-  let refreshing = null;
+  // No refresh dance any more — the session token is permanent until revoked.
+  // A 401 here means the token was actually revoked (logout elsewhere,
+  // account deletion, or an explicit per-session revoke), so just sign out.
   async function api(path, method, body) {
-    const call = () => fetch(BACKEND + path, {
+    const res = await fetch(BACKEND + path, {
       method: method || 'GET',
       headers: body
-        ? { Authorization: 'Bearer ' + tokens().access, 'Content-Type': 'application/json' }
-        : { Authorization: 'Bearer ' + tokens().access },
+        ? { Authorization: 'Bearer ' + token(), 'Content-Type': 'application/json' }
+        : { Authorization: 'Bearer ' + token() },
       body: body ? JSON.stringify(body) : undefined,
       cache: 'no-store',
     });
-    let res = await call();
-    if (res.status === 401) {
-      refreshing = refreshing || refreshTokens().finally(() => { refreshing = null; });
-      if (!(await refreshing)) { signOut(); throw new Error('signed out'); }
-      res = await call();
-      if (res.status === 401) { signOut(); throw new Error('signed out'); }
-    }
+    if (res.status === 401) { signOut(); throw new Error('signed out'); }
     if (!res.ok) throw new Error('Request failed (' + res.status + ')');
     return res.json();
   }

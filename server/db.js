@@ -83,8 +83,13 @@ db.exec(`
     resolved_at INTEGER
   );
 
-  CREATE TABLE IF NOT EXISTS refresh_tokens (
+  -- Opaque permanent session tokens (replaces JWT access + rotating refresh
+  -- tokens). Raw token is never stored — only its SHA-256 hex hash. A session
+  -- stays valid until revoked_at is set (logout, account deletion, per-session
+  -- revoke). See server/middleware.js requireAuth.
+  CREATE TABLE IF NOT EXISTS sessions (
     id         TEXT PRIMARY KEY,
+    token_hash TEXT NOT NULL UNIQUE,
     user_id    TEXT NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     revoked_at INTEGER
@@ -172,7 +177,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_impressions_user    ON impressions(user_id);
   CREATE INDEX IF NOT EXISTS idx_impressions_ts      ON impressions(ts);
   CREATE INDEX IF NOT EXISTS idx_impressions_sponsor ON impressions(sponsor_id);
-  CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_user       ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_clicks_user          ON clicks(user_id);
 `);
 

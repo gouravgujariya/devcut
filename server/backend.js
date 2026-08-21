@@ -1,9 +1,9 @@
 const express = require("express");
 const path = require("path");
-const { randomUUID, randomInt } = require("crypto");
+const { randomUUID, randomInt, randomBytes, createHash } = require("crypto");
 const { z } = require("zod");
 const db = require("./db");
-const { signAccessToken, getPublicJwk, signImpressionToken, verifyImpressionToken } = require("./auth");
+const { signImpressionToken, verifyImpressionToken } = require("./auth");
 const { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit, authRateLimit, oauthRateLimit } = require("./middleware");
 const { Resend } = require("resend");
 
@@ -21,6 +21,17 @@ if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
 // One-time seed for changelog_entries (see db.js) — admin panel owns it from here on,
 // via POST/PUT/DELETE /api/updates. Only used if the table is still empty at boot.
 const CHANGELOG_SEED = [
+  {
+    version: "0.2.0",
+    date: "2026-08-22",
+    title: "Sign-in that doesn't expire",
+    notes: [
+      "You'll need to sign in one more time after this update — sorry for the one-time hiccup",
+      "After that: no more random 'session expired' pop-ups, ever, until you actually sign out",
+      "Signing out (or reporting a lost laptop) now cuts off access instantly instead of within a day",
+    ],
+    critical: true,
+  },
   {
     version: "0.1.4",
     date: "2026-08-20",
@@ -125,10 +136,18 @@ app.use("/site", express.static(path.join(__dirname, "..", "landing")));
 
 app.use("/v1", corsMw, globalRateLimit);
 
-// GET /v1/jwks  — public key for client-side token verification
-app.get("/v1/jwks", (req, res) => {
-  res.json({ keys: [getPublicJwk()] });
-});
+// Opaque permanent session token: 256 bits, hex. Raw value is returned to the
+// client exactly once and never stored server-side — only its SHA-256 hash,
+// looked up by requireAuth on every request. No expiry, no rotation: a
+// session stays valid until explicitly revoked (logout / account deletion /
+// per-session revoke via DELETE /v1/me/sessions/:id).
+function issueSession(userId) {
+  const token = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  db.prepare("INSERT INTO sessions (id, token_hash, user_id) VALUES (?, ?, ?)")
+    .run(randomUUID(), tokenHash, userId);
+  return token;
+}
 
 // Row → wire shape: notes back to an array, critical back to a boolean.
 function changelogEntryOut(row) {
@@ -160,7 +179,7 @@ app.get("/v1/updates", (req, res) => {
   res.json({ latest, entries });
 });
 
-// POST /v1/register  — exchange invite code for access + refresh tokens
+// POST /v1/register  — exchange invite code for a session token
 app.post("/v1/register", authRateLimit, (req, res) => {
   const parse = z.object({ inviteCode: z.string().min(1) }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "inviteCode required" });
@@ -173,13 +192,13 @@ app.post("/v1/register", authRateLimit, (req, res) => {
   if (!invite) return res.status(403).json({ error: "invalid_or_used_code" });
 
   const userId = randomUUID();
-  const refreshToken = randomUUID();
+  let token;
 
   try {
     db.transaction(() => {
       db.prepare("INSERT INTO users (id, email, invite_code, company) VALUES (?, ?, ?, ?)").run(userId, invite.email, invite.code, invite.company || null);
       db.prepare("UPDATE beta_invites SET used_at = ?, used_by_user_id = ? WHERE code = ?").run(Math.floor(Date.now() / 1000), userId, invite.code);
-      db.prepare("INSERT INTO refresh_tokens (id, user_id) VALUES (?, ?)").run(refreshToken, userId);
+      token = issueSession(userId);
     })();
   } catch (e) {
     console.error("[register] DB error:", e.message);
@@ -187,7 +206,7 @@ app.post("/v1/register", authRateLimit, (req, res) => {
   }
 
   console.log(`[register] new user ${userId} via code ${code}`);
-  res.json({ accessToken: signAccessToken(userId), refreshToken, userId });
+  res.json({ token, userId });
 });
 
 // POST /v1/login  — sign in again using an already-used invite code
@@ -204,11 +223,10 @@ app.post("/v1/login", authRateLimit, (req, res) => {
   const user = db.prepare("SELECT status FROM users WHERE id = ?").get(invite.used_by_user_id);
   if (!user || user.status !== "active") return res.status(403).json({ error: "account_revoked" });
 
-  const refreshToken = randomUUID();
-  db.prepare("INSERT INTO refresh_tokens (id, user_id) VALUES (?, ?)").run(refreshToken, invite.used_by_user_id);
+  const token = issueSession(invite.used_by_user_id);
 
   console.log(`[login] user=${invite.used_by_user_id} via code ${code}`);
-  res.json({ accessToken: signAccessToken(invite.used_by_user_id), refreshToken, userId: invite.used_by_user_id });
+  res.json({ token, userId: invite.used_by_user_id });
 });
 
 // Auth-grade email equivalence — NOT the same rule as canonicalEmail().
@@ -334,13 +352,6 @@ async function resolveGithubIdentity(githubAccessToken) {
   return { ok: true, userId };
 }
 
-// Fresh session for a resolved user id
-function issueTokens(userId) {
-  const refreshToken = randomUUID();
-  db.prepare("INSERT INTO refresh_tokens (id, user_id) VALUES (?, ?)").run(refreshToken, userId);
-  return { accessToken: signAccessToken(userId), refreshToken, userId };
-}
-
 // POST /v1/auth/github  — sign in (or register, if invited) with a GitHub account
 // instead of an invite code. Client gets the access token from VS Code's built-in
 // `vscode.authentication.getSession('github', ...)` — no OAuth app secret needed here,
@@ -351,7 +362,7 @@ app.post("/v1/auth/github", authRateLimit, async (req, res) => {
 
   const result = await resolveGithubIdentity(parse.data.accessToken);
   if (!result.ok) return res.status(result.status).json({ error: result.error });
-  res.json(issueTokens(result.userId));
+  res.json({ token: issueSession(result.userId), userId: result.userId });
 });
 
 // ─── Browser GitHub OAuth (web dashboard) ─────────────────────────────────────
@@ -501,9 +512,9 @@ app.get("/v1/auth/github/callback", oauthRateLimit, async (req, res) => {
   const result = await resolveGithubIdentity(ghToken);
   if (!result.ok) return back(`error=${result.error}`);
 
-  const { accessToken, refreshToken, userId } = issueTokens(result.userId);
-  console.log(`[auth/github] browser login user=${userId} → ${next}`);
-  back(`access=${accessToken}&refresh=${refreshToken}&uid=${userId}`);
+  const token = issueSession(result.userId);
+  console.log(`[auth/github] browser login user=${result.userId} → ${next}`);
+  back(`token=${token}&uid=${result.userId}`);
 });
 
 // GET /v1/me  — lightweight token validation + profile
@@ -533,52 +544,11 @@ app.delete("/v1/me/github", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /v1/token/refresh  — exchange refresh token for new access + refresh tokens
-// No Authorization header needed — the refresh token IS the credential here.
-app.post("/v1/token/refresh", authRateLimit, (req, res) => {
-  const parse = z.object({ refreshToken: z.string().uuid() }).safeParse(req.body);
-  if (!parse.success) return res.status(400).json({ error: "refreshToken required" });
-
-  const record = db.prepare(
-    "SELECT user_id, revoked_at, created_at FROM refresh_tokens WHERE id = ?"
-  ).get(parse.data.refreshToken);
-  if (!record) return res.status(401).json({ error: "invalid_refresh_token" });
-
-  // A rotated token coming back = theft signal — nuke the whole session family.
-  if (record.revoked_at != null) {
-    db.prepare("UPDATE refresh_tokens SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL")
-      .run(record.user_id);
-    console.warn(`[token-refresh] REUSE DETECTED user=${record.user_id} — all refresh tokens revoked`);
-    return res.status(401).json({ error: "refresh_reuse_detected" });
-  }
-
-  // Refresh tokens live 30 days from issue; after that, log in again.
-  if (record.created_at < Math.floor(Date.now() / 1000) - 30 * 86400) {
-    return res.status(401).json({ error: "refresh_expired" });
-  }
-
-  const user = db.prepare("SELECT status FROM users WHERE id = ?").get(record.user_id);
-  if (!user || user.status !== "active") return res.status(403).json({ error: "account_revoked" });
-
-  // Rotate: revoke the used token, issue a brand new one.
-  // If an attacker steals + uses a refresh token, the real user's next refresh fails — detectable.
-  const newRefreshToken = randomUUID();
-  db.prepare("UPDATE refresh_tokens SET revoked_at = unixepoch() WHERE id = ?")
-    .run(parse.data.refreshToken);
-  db.prepare("INSERT INTO refresh_tokens (id, user_id) VALUES (?, ?)")
-    .run(newRefreshToken, record.user_id);
-
-  console.log(`[token-refresh] user=${record.user_id}`);
-  res.json({ accessToken: signAccessToken(record.user_id), refreshToken: newRefreshToken });
-});
-
-// DELETE /v1/logout  — revoke refresh token (sign out)
+// DELETE /v1/logout  — revoke the session presented in the Authorization header
 app.delete("/v1/logout", requireAuth, (req, res) => {
-  const parse = z.object({ refreshToken: z.string().uuid() }).safeParse(req.body);
-  if (parse.success) {
-    db.prepare("UPDATE refresh_tokens SET revoked_at = unixepoch() WHERE id = ? AND user_id = ?")
-      .run(parse.data.refreshToken, req.userId);
-  }
+  db.prepare("UPDATE sessions SET revoked_at = unixepoch() WHERE id = ? AND revoked_at IS NULL")
+    .run(req.sessionId);
+  console.log(`[logout] user=${req.userId} session=${req.sessionId}`);
   res.json({ ok: true });
 });
 
@@ -595,10 +565,27 @@ app.delete("/v1/me", requireAuth, (req, res) => {
   db.transaction(() => {
     db.prepare("UPDATE users SET status = 'deleted', email = ?, upi_id = NULL, company = NULL, country = NULL WHERE id = ?")
       .run(`deleted-${req.userId}@deleted.invalid`, req.userId);
-    db.prepare("UPDATE refresh_tokens SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL")
+    db.prepare("UPDATE sessions SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL")
       .run(req.userId);
   })();
   console.log(`[delete-me] user=${req.userId}`);
+  res.json({ ok: true });
+});
+
+// GET /v1/me/sessions  — list this user's sessions ("lost my laptop" support case)
+app.get("/v1/me/sessions", requireAuth, (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, created_at FROM sessions WHERE user_id = ? AND revoked_at IS NULL ORDER BY created_at DESC"
+  ).all(req.userId);
+  res.json(rows.map(r => ({ id: r.id, created_at: r.created_at, current: r.id === req.sessionId })));
+});
+
+// DELETE /v1/me/sessions/:id  — revoke one session (e.g. a lost device)
+app.delete("/v1/me/sessions/:id", requireAuth, (req, res) => {
+  const info = db.prepare(
+    "UPDATE sessions SET revoked_at = unixepoch() WHERE id = ? AND user_id = ? AND revoked_at IS NULL"
+  ).run(req.params.id, req.userId);
+  if (info.changes === 0) return res.status(404).json({ error: "session_not_found" });
   res.json({ ok: true });
 });
 

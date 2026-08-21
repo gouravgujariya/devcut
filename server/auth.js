@@ -24,21 +24,9 @@ if (process.env.RSA_PRIVATE_KEY) {
 }
 
 // ── Token operations ──────────────────────────────────────────────────────────
-
-function signAccessToken(userId) {
-  return jwt.sign({ sub: userId }, privateKey, {
-    algorithm: "RS256",
-    expiresIn: "1d",
-    issuer: ISSUER,
-  });
-}
-
-function verifyAccessToken(token) {
-  return jwt.verify(token, publicKey, {
-    algorithms: ["RS256"],
-    issuer: ISSUER,
-  });
-}
+// Session (access) tokens are opaque and DB-backed now — see server/middleware.js
+// and the `sessions` table in server/db.js. Only the impression token below still
+// needs RSA/JWT, so the key-loading block above stays.
 
 // Short-lived, single-use proof that a specific ad was served to a specific user.
 // jti is enforced unique at insert time so a token credits at most one impression.
@@ -60,10 +48,4 @@ function verifyImpressionToken(token) {
   });
 }
 
-// Returns the public key as a JWK object (for GET /v1/jwks)
-function getPublicJwk() {
-  const jwk = publicKey.export({ format: "jwk" });
-  return { ...jwk, use: "sig", alg: "RS256", kid: "kickback-rs256-1" };
-}
-
-module.exports = { signAccessToken, verifyAccessToken, signImpressionToken, verifyImpressionToken, getPublicJwk };
+module.exports = { signImpressionToken, verifyImpressionToken };
