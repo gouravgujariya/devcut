@@ -8,10 +8,10 @@
 ## What it looks like
 
 ```
- ⎇ main   ⚙ Building (14s)…   📣 Postman — test your APIs in seconds →   $(coin) ₹0.04 this session
+ ⎇ main   ⚙ Building (14s)…   📣 Postman — test your APIs in seconds →   $(coin) ₹0.25 this session
 ```
 
-The moment you run `npm run build`, `cargo build`, `pytest`, `docker pull` etc., a sponsored line appears on the right side of your status bar. When the task finishes, it flashes `✓ Earned ₹0.08 this build` for 4 seconds, then disappears.
+The moment you run `npm run build`, `cargo build`, `pytest`, `docker pull` etc., a sponsored line appears on the right side of your status bar. When the task finishes, it flashes `✓ Earned ₹0.25 this build` for 4 seconds, then disappears.
 
 ---
 
@@ -86,7 +86,7 @@ Tasks triggered via VS Code's Task runner also count.
 
 ## Earnings
 
-- **₹0.25 per 1,000 impressions** (beta rate — ₹0.00025 per impression)  
+- **~₹0.25 per impression** (typical — the exact rate is set per advertiser)  
 - Each 30-second rotation during a task = 1 impression  
 - Minimum withdrawal: ₹50 via UPI  
 - Payouts processed within 7 days

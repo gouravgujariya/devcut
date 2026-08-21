@@ -1,13 +1,14 @@
 // Runs outside the extension host on `vscode:uninstall` — plain Node, no `vscode` import
-// available here. Best-effort: read the session mirrored by authStore.ts and tell the
-// backend to revoke it. Never throws — an uninstall must never fail because of this.
+// available here. Best-effort: delete the plaintext session.json mirror authStore.ts
+// keeps for this hook, so no token is left on disk. Deliberately does NOT revoke the
+// session server-side — the keychain token survives a reinstall, so a manual .vsix
+// update would otherwise sign the user out. Never throws — an uninstall must never
+// fail because of this.
 "use strict";
 
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const https = require("https");
-const http = require("http");
 
 function globalStorageDir() {
   const pkg = require("../package.json");
@@ -25,42 +26,12 @@ function globalStorageDir() {
   return path.join(home, ".config", "Code", "User", "globalStorage", id);
 }
 
-function revoke(session) {
-  return new Promise((resolve) => {
-    try {
-      const url = new URL("/v1/logout", session.backendUrl);
-      const lib = url.protocol === "https:" ? https : http;
-      const req = lib.request(
-        url,
-        {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${session.token}` },
-          timeout: 3000,
-        },
-        (res) => {
-          res.resume(); // drain, don't care about the body
-          resolve();
-        }
-      );
-      req.on("error", () => resolve());
-      req.on("timeout", () => { req.destroy(); resolve(); });
-      req.end();
-    } catch {
-      resolve();
-    }
-  });
-}
-
-async function main() {
+function main() {
   try {
     const sessionPath = path.join(globalStorageDir(), "session.json");
-    const raw = fs.readFileSync(sessionPath, "utf8");
-    const session = JSON.parse(raw);
-    if (session && session.token && session.backendUrl) {
-      await revoke(session);
-    }
+    fs.rmSync(sessionPath, { force: true });
   } catch {
-    // No session file, unreadable, offline, whatever — best-effort only.
+    // Missing dir, permissions, whatever — best-effort only.
   }
 }
 

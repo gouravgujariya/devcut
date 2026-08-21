@@ -659,7 +659,7 @@
           <div><span class="ln">2</span> <span class="kw">export async function</span> <span class="fn">activate</span>(ctx: vscode.ExtensionContext) {</div>
           <div><span class="ln">3</span> &nbsp;&nbsp;<span class="kw">const</span> sponsor = <span class="kw">await</span> <span class="fn">fetchSponsor</span>(<span class="str">'build-started'</span>);</div>
           <div><span class="ln">4</span> &nbsp;&nbsp;statusBar.<span class="fn">text</span>(<span class="str">`📣 ${sponsor.message}`</span>);</div>
-          <div><span class="ln">5</span> &nbsp;&nbsp;<span class="cm">// Record impression → earn ₹0.04 per 30s slot</span></div>
+          <div><span class="ln">5</span> &nbsp;&nbsp;<span class="cm">// Record impression → earn ~₹0.25 per 30s slot</span></div>
           <div><span class="ln">6</span> &nbsp;&nbsp;<span class="fn">recordImpression</span>(sponsor.id, userId);</div>
           <div><span class="ln">7</span> }</div>
         </div>
@@ -671,7 +671,7 @@
             <div class="statusbar-ad">
               📣 <span class="ticker" id="adTicker">DigitalOcean — Deploy in seconds →</span>
             </div>
-            <div class="earnings-badge" id="earningsBadge">+₹0.04</div>
+            <div class="earnings-badge" id="earningsBadge">+₹0.25</div>
           </div>
         </div>
       </div>
@@ -712,7 +712,7 @@
         <span class="step-num">01</span>
         <span class="step-icon">📦</span>
         <h3>Install the extension</h3>
-        <p>One click from the VS Code Marketplace. Completely free. Open source. No personal data beyond a pseudonymous user ID.</p>
+        <p>DevCut is in private beta — download the .vsix file and install it straight into VS Code. Completely free. Open source. No personal data beyond a pseudonymous user ID.</p>
       </div>
       <div class="step-card">
         <span class="step-num">02</span>
@@ -773,7 +773,7 @@
     </div>
 
     <p style="color:var(--muted);font-size:.78rem;margin-top:1rem;">
-      Estimate: ~12 ad slots/hr × ₹0.04/slot × 22 working days. Actual depends on active build/test time.
+      Estimate: ~12 ad slots/hr × ~₹0.25/slot (typical) × 22 working days. Actual depends on active build/test time and the advertiser's rate.
       <a href="earnings.html" style="color:var(--green);">See full breakdown →</a>
     </p>
   </div>
@@ -782,33 +782,27 @@
 <!-- ── INSTALL ── -->
 <section id="install">
   <div class="container" style="max-width:640px;text-align:center;">
-    <div class="section-label">One Command</div>
-    <h2 class="section-title">Install in 10 seconds</h2>
+    <div class="section-label">Private Beta</div>
+    <h2 class="section-title">Install in 30 seconds</h2>
     <p class="section-sub" style="margin:0 auto 2rem;">
-      Open VS Code, press
-      <kbd style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:.15rem .45rem;font-family:monospace;font-size:.88em;">⌘ P</kbd>
-      (or <kbd style="background:var(--surface2);border:1px solid var(--border);border-radius:4px;padding:.15rem .45rem;font-family:monospace;font-size:.88em;">Ctrl+P</kbd>), paste this:
+      DevCut is in private beta, so it's not on the Marketplace yet. You install it from a file:
     </p>
 
-    <div style="
+    <ol style="
       background:var(--surface2);border:1px solid var(--border);
-      border-radius:12px;padding:1.2rem 1.5rem;
-      display:flex;align-items:center;justify-content:space-between;gap:1rem;
-      font-family:'Fira Code','Cascadia Code',monospace;font-size:1rem;
-      text-align:left;
+      border-radius:12px;padding:1.2rem 1.5rem 1.2rem 2.8rem;
+      text-align:left;line-height:2;color:var(--muted);margin-bottom:2rem;
     ">
-      <span><span style="color:var(--green);">ext install</span> <span style="color:var(--text);">devcut.devcut</span></span>
-      <button id="copyInstallBtn" onclick="copyInstall()" style="
-        background:var(--surface);border:1px solid var(--border);
-        color:var(--muted);border-radius:6px;padding:.35rem .75rem;
-        font-size:.8rem;cursor:pointer;transition:all .2s;white-space:nowrap;
-        font-family:inherit;
-      ">Copy</button>
-    </div>
+      <li><strong style="color:var(--text);">Download the extension</strong> (.vsix file) below.</li>
+      <li>In VS Code press
+        <kbd style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:.15rem .45rem;font-family:monospace;font-size:.88em;">Ctrl+Shift+P</kbd>
+        (<kbd style="background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:.15rem .45rem;font-family:monospace;font-size:.88em;">⌘⇧P</kbd> on Mac)
+        and run <strong style="color:var(--text);">Extensions: Install from VSIX…</strong></li>
+      <li>Pick the file you downloaded, then reload the window.</li>
+    </ol>
 
-    <p style="color:var(--muted);font-size:.82rem;margin-top:1rem;">
-      Or search <strong style="color:var(--text);">"DevCut"</strong> in the VS Code Extensions panel (Ctrl+Shift+X).
-    </p>
+    <!-- TODO(deploy): host devcut-latest.vsix at this path (or point href at GitHub Releases). The .vsix is gitignored, so hosting it is a deploy decision — see handoff notes. -->
+    <a class="btn-primary" href="/site/devcut-latest.vsix" download>⬇ Download DevCut (.vsix)</a>
   </div>
 </section>
 
@@ -843,7 +837,7 @@
 
     </div>
     <p style="color:var(--muted);font-size:.78rem;margin-top:1.5rem;text-align:center;">
-      Estimates at 12 slots/hr × ₹0.04/slot × 22 days. <a href="earnings.html" style="color:var(--green);">Full earnings breakdown →</a>
+      Estimates at 12 slots/hr × ~₹0.25/slot × 22 days. <a href="earnings.html" style="color:var(--green);">Full earnings breakdown →</a>
     </p>
   </div>
 </section>
@@ -861,7 +855,7 @@
         <h2>I'm a Developer</h2>
         <p class="path-sub">Turn the time you already spend waiting on builds into a passive income stream. Zero effort after install.</p>
         <ul class="path-perks">
-          <li>Free VS Code extension — install in 10 seconds</li>
+          <li>Free VS Code extension — installs from a .vsix in 30 seconds</li>
           <li>Earn per impression + per click, no minimums to start</li>
           <li>Revenue share is transparent and publicly auditable</li>
           <li>UPI payout — works with any Indian bank or wallet</li>
@@ -1396,7 +1390,7 @@ setInterval(() => {
 
 /* ── EARNINGS FLASH ── */
 const earningsBadge = document.getElementById('earningsBadge');
-const earningsValues = ['+₹0.04', '+₹0.08', '+₹0.04', '+₹0.12'];
+const earningsValues = ['+₹0.25', '+₹0.42', '+₹0.25', '+₹0.30'];
 let eIdx = 0;
 setInterval(() => {
   eIdx = (eIdx + 1) % earningsValues.length;
@@ -1562,7 +1556,7 @@ setInterval(() => {
   const calcRupees = document.getElementById('calcRupees');
   const calcDollars = document.getElementById('calcDollars');
   const hoursLabel  = document.getElementById('hoursLabel');
-  const INR_PER_SLOT = 0.04, SLOTS_PER_HOUR = 12, DAYS = 22, USD_RATE = 84;
+  const INR_PER_SLOT = 0.25, SLOTS_PER_HOUR = 12, DAYS = 22, USD_RATE = 84;
 
   function update() {
     const h   = +slider.value;
@@ -1578,21 +1572,6 @@ setInterval(() => {
 
   if (slider) { slider.addEventListener('input', update); update(); }
 })();
-
-/* ── INSTALL COPY BUTTON ── */
-function copyInstall() {
-  navigator.clipboard.writeText('ext install devcut.devcut').then(() => {
-    const btn = document.getElementById('copyInstallBtn');
-    btn.textContent = 'Copied ✓';
-    btn.style.color = 'var(--green)';
-    btn.style.borderColor = 'var(--green)';
-    setTimeout(() => {
-      btn.textContent = 'Copy';
-      btn.style.color = '';
-      btn.style.borderColor = '';
-    }, 2000);
-  });
-}
 
 /* ── SCROLL REVEAL ── */
 const revealEls = document.querySelectorAll('.step-card, .path-card, .faq-item, .oss-card');

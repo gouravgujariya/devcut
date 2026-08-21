@@ -686,9 +686,12 @@ function spendBySponsor(todayOnly) {
   ).all().reduce((m, r) => (m[r.sponsor_id] = r.spend, m), {});
 }
 
+// Mirrors detectTaskType / TASK_TYPE_MAP in src/extension.ts — the only values an honest client sends
+const KNOWN_TASK_TYPES = new Set(["claude", "aider", "cursor", "npm", "yarn", "pnpm", "npx", "pip", "python", "docker", "k8s", "terraform", "gradle", "maven", "rust", "go", "make", "cmake", "git", "ruby", "php"]);
+
 // GET /v1/sponsor-line  — fetch current ad using highest-bidder auction (authenticated)
 app.get("/v1/sponsor-line", requireAuth, (req, res) => {
-  const taskType = req.query.taskType || null;
+  const taskType = KNOWN_TASK_TYPES.has(req.query.taskType) ? req.query.taskType : null;
   const idle = req.query.idle === "1" || req.query.idle === "true";
 
   // Company/university name is mandatory — no ad (no earnings) until it's filled in.
@@ -793,8 +796,8 @@ app.post("/v1/impressions", requireAuth, rateLimitImpressions, (req, res) => {
       const total = db.prepare(
         "SELECT COALESCE(SUM(bid_paise), 0) AS spend FROM impressions WHERE sponsor_id = ?"
       ).get(sponsor.id).spend;
-      if ((sponsor.budget_paise_daily != null && today + sponsor.bid_paise > sponsor.budget_paise_daily) ||
-          (sponsor.budget_paise_total != null && total + sponsor.bid_paise > sponsor.budget_paise_total)) {
+      if ((sponsor.budget_paise_daily != null && today + claims.bid > sponsor.budget_paise_daily) ||
+          (sponsor.budget_paise_total != null && total + claims.bid > sponsor.budget_paise_total)) {
         return true;
       }
       db.prepare("INSERT INTO impressions (user_id, sponsor_id, task_type, ip, payout_paise, bid_paise, jti) VALUES (?, ?, ?, ?, ?, ?, ?)")
@@ -1170,7 +1173,7 @@ function buildInviteEmail(rawName, code) {
 }
 
 // POST /v1/public/signup  — waitlist signup: generate invite code + send email
-app.post("/v1/public/signup", async (req, res) => {
+app.post("/v1/public/signup", authRateLimit, async (req, res) => {
   const parse = z.object({
     name:    z.string().min(1).max(120),
     email:   z.string().email(),
@@ -1190,7 +1193,7 @@ app.post("/v1/public/signup", async (req, res) => {
   // Dedupe on canonical email (dev+tag@gmail.com == d.e.v@gmail.com); fall back
   // to exact email for legacy rows that predate the canonical column.
   const existing = db.prepare(
-    "SELECT code FROM beta_invites WHERE email_canonical = ? OR (email_canonical IS NULL AND email = ?)"
+    "SELECT code, email FROM beta_invites WHERE email_canonical = ? OR (email_canonical IS NULL AND email = ?)"
   ).get(canonical, normalizedEmail);
   if (existing) {
     // Resend their code
@@ -1198,7 +1201,7 @@ app.post("/v1/public/signup", async (req, res) => {
     if (resend) {
       const result = await resend.emails.send({
         from: "DevCut <techsupport@devcut.co.in>",
-        to: normalizedEmail,
+        to: existing.email,
         subject: "Your DevCut invite code (resent)",
         html: buildInviteEmail(name, existing.code),
       }).catch(err => { console.error("[signup] resend error:", err.message); return null; });
@@ -1556,6 +1559,18 @@ app.get("/api/users", (req, res) => {
      GROUP BY u.id ORDER BY total_earned_paise DESC`
   ).all();
   res.json(users);
+});
+
+app.put("/api/users/:id/status", (req, res) => {
+  const parse = z.object({ status: z.enum(["active", "banned"]) }).safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: "invalid status" });
+  db.transaction(() => {
+    db.prepare("UPDATE users SET status = ? WHERE id = ?").run(parse.data.status, req.params.id);
+    if (parse.data.status !== "active")
+      db.prepare("UPDATE sessions SET revoked_at = unixepoch() WHERE user_id = ? AND revoked_at IS NULL").run(req.params.id);
+  })();
+  console.log(`[admin] user=${req.params.id} status=${parse.data.status}`);
+  res.json({ ok: true });
 });
 
 app.get("/api/advertiser-inquiries", (req, res) => {

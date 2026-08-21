@@ -20,6 +20,7 @@ let profileTimer: NodeJS.Timeout | undefined;
 const PROFILE_DONE  = "devcut.profileDone";
 const PROFILE_SKIPS = "devcut.profileSkips";
 const COMPANY_DONE  = "devcut.companyDone";
+const COMPANY_NUDGE_SEEN = "devcut.companyNudgeSeen";
 const UPDATE_SEEN   = "devcut.updateSeenVersion";
 
 // readyBar's resting state, restored when the update dot is dismissed.
@@ -238,7 +239,11 @@ export function activate(context: vscode.ExtensionContext) {
         // code instead of dead-ending; most users never discover the separate
         // "DevCut: Sign In" command.
         if (err?.message !== "invalid_or_used_code") {
-          vscode.window.showErrorMessage(`DevCut: activation failed — ${err?.message || "unknown error"}`);
+          vscode.window.showErrorMessage(
+            /could not reach backend/.test(err?.message ?? "")
+              ? "DevCut couldn't reach the server — it's usually just waking up. Wait about 20 seconds and run 'DevCut: Activate with Invite Code' again. Your code is still valid."
+              : `DevCut: activation failed — ${err?.message || "unknown error"}`
+          );
           return;
         }
       }
@@ -328,6 +333,18 @@ export function activate(context: vscode.ExtensionContext) {
             : `DevCut: GitHub sign-in failed — ${msg}`
         );
       }
+    })
+  );
+
+  // ── Sign out ──────────────────────────────────────────────────────────────
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("devcut.signOut", async () => {
+      await sponsorClient.logout(); // best-effort server revoke — never throws
+      await authStore.clearToken();
+      vscode.window.showInformationMessage(
+        "Signed out of DevCut. Run 'DevCut: Sign in with GitHub' or 'DevCut: Activate with Invite Code' when you want to start earning again."
+      );
     })
   );
 
@@ -544,7 +561,19 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("devcut.profileSurvey", () => maybeAskProfile(context, true))
   );
   // Deferred so it never lands on top of whatever the user opened VS Code to do.
-  profileTimer = setTimeout(() => maybeAskProfile(context), 15_000);
+  // A dismissible toast, never a raw input box on a timer: only "Add it" opens the
+  // company flow, and the nudge shows at most once ever (seen-flag, either answer).
+  profileTimer = setTimeout(async () => {
+    if (!authStore.getUserId()) return;
+    if (context.globalState.get<boolean>(COMPANY_DONE)) return;
+    if (context.globalState.get<boolean>(COMPANY_NUDGE_SEEN)) return;
+    await context.globalState.update(COMPANY_NUDGE_SEEN, true);
+    const action = await vscode.window.showInformationMessage(
+      "DevCut: one thing left — add your company or college and ads can start earning. ",
+      "Add it", "Later"
+    );
+    if (action === "Add it") maybeAskProfile(context);
+  }, 15_000);
 
   // ── Update check ──────────────────────────────────────────────────────────
   // Shipped as a private .vsix, so nothing prompts the user to update — we ask
@@ -650,52 +679,61 @@ const COUNTRIES = [
   "Bangladesh", "Philippines", "Germany", "United Kingdom", "Other",
 ];
 
+// Re-entrancy guard: activation path and the startup nudge must never stack two surveys.
+let profileInFlight = false;
+
 async function maybeAskProfile(context: vscode.ExtensionContext, force = false): Promise<void> {
+  if (profileInFlight) return;
   if (!authStore?.getUserId()) return;
   if (activeTaskCount > 0) return; // never interrupt a build
 
-  // Company/university name is mandatory — no ad-serving (no earnings) until it's
-  // answered server-side (see GET /v1/sponsor-line). Keeps re-asking every trigger
-  // until filled in; unlike the optional survey below, it never gives up.
-  if (!context.globalState.get<boolean>(COMPANY_DONE)) {
-    const company = await vscode.window.showInputBox({
-      title: "DevCut — company or university name (required to earn)",
-      prompt: "This is required before ads can start showing.",
-      ignoreFocusOut: true,
-      validateInput: (v) => (v.trim() ? undefined : "Required"),
-    });
-    if (company?.trim()) {
-      if (await sponsorClient.saveProfile({ company: company.trim() })) {
-        await context.globalState.update(COMPANY_DONE, true);
+  profileInFlight = true;
+  try {
+    // Company/university name is mandatory — no ad-serving (no earnings) until it's
+    // answered server-side (see GET /v1/sponsor-line). Keeps re-asking every trigger
+    // until filled in; unlike the optional survey below, it never gives up.
+    if (!context.globalState.get<boolean>(COMPANY_DONE)) {
+      const company = await vscode.window.showInputBox({
+        title: "DevCut — company or university name (required to earn)",
+        prompt: "This is required before ads can start showing.",
+        ignoreFocusOut: false,
+        validateInput: (v) => (v.trim() ? undefined : "Required"),
+      });
+      if (company?.trim()) {
+        if (await sponsorClient.saveProfile({ company: company.trim() })) {
+          await context.globalState.update(COMPANY_DONE, true);
+        }
       }
     }
-  }
 
-  if (!force) {
-    if (context.globalState.get<boolean>(PROFILE_DONE)) return;
-    if (context.globalState.get<number>(PROFILE_SKIPS, 0) >= 2) return;
-  }
+    if (!force) {
+      if (context.globalState.get<boolean>(PROFILE_DONE)) return;
+      if (context.globalState.get<number>(PROFILE_SKIPS, 0) >= 2) return;
+    }
 
-  const ask = (placeHolder: string, items: string[]) =>
-    vscode.window.showQuickPick(items, {
-      placeHolder,
-      title: "DevCut — 3 quick questions (Esc to skip)",
-    });
+    const ask = (placeHolder: string, items: string[]) =>
+      vscode.window.showQuickPick(items, {
+        placeHolder,
+        title: "DevCut — 3 quick questions (Esc to skip)",
+      });
 
-  // Chained: an Esc at any step ends the survey and keeps whatever came before.
-  const experienceLevel = await ask("Your experience level?", ["student", "junior", "mid", "senior"]);
-  const primaryStack = experienceLevel
-    ? await ask("Your primary stack?", ["node", "python", "go", "java", "rust", "php", "other"])
-    : undefined;
-  const country = primaryStack ? await ask("Where are you based?", COUNTRIES) : undefined;
+    // Chained: an Esc at any step ends the survey and keeps whatever came before.
+    const experienceLevel = await ask("Your experience level?", ["student", "junior", "mid", "senior"]);
+    const primaryStack = experienceLevel
+      ? await ask("Your primary stack?", ["node", "python", "go", "java", "rust", "php", "other"])
+      : undefined;
+    const country = primaryStack ? await ask("Where are you based?", COUNTRIES) : undefined;
 
-  if (!experienceLevel && !primaryStack && !country) {
-    await context.globalState.update(PROFILE_SKIPS, context.globalState.get<number>(PROFILE_SKIPS, 0) + 1);
-    return;
-  }
+    if (!experienceLevel && !primaryStack && !country) {
+      await context.globalState.update(PROFILE_SKIPS, context.globalState.get<number>(PROFILE_SKIPS, 0) + 1);
+      return;
+    }
 
-  if (await sponsorClient.saveProfile({ experienceLevel, primaryStack, country })) {
-    await context.globalState.update(PROFILE_DONE, true);
+    if (await sponsorClient.saveProfile({ experienceLevel, primaryStack, country })) {
+      await context.globalState.update(PROFILE_DONE, true);
+    }
+  } finally {
+    profileInFlight = false;
   }
 }
 

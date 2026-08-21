@@ -63,6 +63,10 @@
         "title": "DevCut: Sign in with GitHub"
       },
       {
+        "command": "devcut.signOut",
+        "title": "DevCut: Sign Out"
+      },
+      {
         "command": "devcut.openWebsite",
         "title": "DevCut: Open Website / Get Invite Code"
       },
@@ -88,6 +92,7 @@
       "properties": {
         "devcut.backendUrl": {
           "type": "string",
+          "scope": "application",
           "default": "https://waitwage-production.up.railway.app",
           "description": "Backend URL that serves the current sponsor line and records impressions."
         },

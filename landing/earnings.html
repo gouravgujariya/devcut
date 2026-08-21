@@ -66,7 +66,7 @@
   <div class="container" style="max-width:780px;">
     <div class="section-label">Interactive Estimator</div>
     <h2 class="section-title">Slide. See your number.</h2>
-    <p class="section-sub">Based on 12 ad slots/hr × ₹0.04/slot × 22 working days/month.</p>
+    <p class="section-sub">Based on 12 ad slots/hr × ~₹0.25/slot (typical) × 22 working days/month. Actual rate varies by advertiser.</p>
 
     <div style="margin-top:2.5rem;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.8rem;">
@@ -111,8 +111,8 @@
       </thead>
       <tbody>
         <tr>
-          <td>Impression earnings (₹0.04 × <span id="tSlots">48</span> slots)</td>
-          <td id="tImprDay">₹1.92</td>
+          <td>Impression earnings (₹0.25 × <span id="tSlots">48</span> slots)</td>
+          <td id="tImprDay">₹12.00</td>
           <td id="tImprMonth">₹42</td>
         </tr>
         <tr>
@@ -286,7 +286,7 @@
 (function () {
   const slider  = document.getElementById('hoursSlider');
   const label   = document.getElementById('hoursLabel');
-  const INR_PER_SLOT = 0.04, SLOTS_PER_HOUR = 12, DAYS = 22, WEEKS = 4.4, USD_RATE = 84;
+  const INR_PER_SLOT = 0.25, SLOTS_PER_HOUR = 12, DAYS = 22, WEEKS = 4.4, USD_RATE = 84;
   const CLICK_RATE = 0.02, CLICK_EARNINGS = 0.20;
 
   function update() {
