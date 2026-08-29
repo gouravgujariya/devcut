@@ -46,18 +46,31 @@ function adminAuth(req, res, next) {
   next();
 }
 
+// Rupee ceiling per user per day. The row cap alone bounds *count*, not *money*:
+// /v1/sponsor-line is unlimited and returns payoutPaise in cleartext, so a scripted
+// caller can re-roll the bid-weighted auction until the top-paying sponsor comes up,
+// discard the rest, and redeem only the best token. That makes extraction
+// 500 x max(payout) rather than 500 x average — i.e. onboarding a higher-bidding
+// advertiser would directly raise what a farmed account earns. Capping paise makes
+// the ceiling independent of what advertisers bid.
+// 12500p = the old effective max (500 x 25p), so honest users see no change today.
+const DAILY_EARNINGS_PAISE_CAP = Number(process.env.DAILY_EARNINGS_PAISE_CAP || 12500);
+
 // DB-backed per-user impression limits — survives restarts, unlike an in-memory map.
-// Floor of 25s between impressions (client rotates every 30s; scripted spam gets 429)
-// and 500/day hard cap.
+// Floor of 25s between impressions (client rotates every 30s; scripted spam gets 429),
+// 500/day row cap, and the rupee cap above. Both caps run off one query.
 function rateLimitImpressions(req, res, next) {
   const row = getDb().prepare(
     `SELECT MAX(ts) AS last,
-            COALESCE(SUM(ts > unixepoch('now', 'start of day')), 0) AS today
+            COALESCE(SUM(ts > unixepoch('now', 'start of day')), 0) AS today,
+            COALESCE(SUM(CASE WHEN ts > unixepoch('now', 'start of day')
+                              THEN payout_paise END), 0) AS today_paise
      FROM impressions WHERE user_id = ?`
   ).get(req.userId);
   const now = Math.floor(Date.now() / 1000);
   if (row.last && now - row.last < 25) return res.status(429).json({ error: "too_fast" });
   if (row.today >= 500) return res.status(429).json({ error: "rate_limit_exceeded" });
+  if (row.today_paise >= DAILY_EARNINGS_PAISE_CAP) return res.status(429).json({ error: "daily_earnings_cap" });
   next();
 }
 

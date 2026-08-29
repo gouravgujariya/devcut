@@ -10,6 +10,14 @@ if (process.env.NODE_ENV === "production" && !process.env.DB_PATH) {
 
 const db = new Database(process.env.DB_PATH || path.join(__dirname, "kickback.db"));
 
+// better-sqlite3 is synchronous, so every commit blocks the event loop. The
+// defaults (journal_mode=delete, synchronous=FULL) measured ~2.8ms per write on
+// local SSD and are far worse on a network-backed volume; WAL + NORMAL measured
+// ~0.02ms. NORMAL under WAL cannot corrupt the DB — the worst case is losing the
+// last few commits on a hard power loss, which is the right trade for ad impressions.
+db.pragma("journal_mode = WAL");
+db.pragma("synchronous = NORMAL");
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS sponsors (
     id                  TEXT PRIMARY KEY,
@@ -158,6 +166,7 @@ try { db.exec("ALTER TABLE beta_invites ADD COLUMN email_canonical TEXT"); } cat
 try { db.exec("ALTER TABLE beta_invites ADD COLUMN role TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE beta_invites ADD COLUMN github TEXT"); } catch (_) {}
 try { db.exec("ALTER TABLE beta_invites ADD COLUMN source TEXT"); } catch (_) {}
+try { db.exec("ALTER TABLE beta_invites ADD COLUMN ip TEXT"); } catch (_) {}
 
 // GitHub sign-in as an alternative to invite-code login (POST /v1/auth/github)
 try { db.exec("ALTER TABLE users ADD COLUMN github_id TEXT"); } catch (_) {}
@@ -179,6 +188,10 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_impressions_sponsor ON impressions(sponsor_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_user       ON sessions(user_id);
   CREATE INDEX IF NOT EXISTS idx_clicks_user          ON clicks(user_id);
+  -- POST /v1/clicks checks "was this user served this sponsor" and "did they already
+  -- click it" on every request; both filter user_id + sponsor_id together.
+  CREATE INDEX IF NOT EXISTS idx_clicks_user_sponsor   ON clicks(user_id, sponsor_id, ts);
+  CREATE INDEX IF NOT EXISTS idx_impressions_user_spon ON impressions(user_id, sponsor_id, ts);
 `);
 
 // Advertiser inquiries submitted via the landing page
@@ -212,6 +225,13 @@ db.exec(`
     critical   INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL DEFAULT (unixepoch())
   )
+`);
+
+// Funnel counters, keyed `<event>:<YYYY-MM-DD>` — a daily series without a row
+// per event. This DB lives on a Railway volume (see the DB_PATH warning above),
+// so aggregates only: nothing here is worth the write volume of raw events.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0)
 `);
 
 module.exports = db;

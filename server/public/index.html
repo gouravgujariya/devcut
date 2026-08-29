@@ -229,7 +229,6 @@
     .btn-primary { background: #6366f1; color: #fff; }
     .btn-danger { background: #991b1b; color: #fff; }
     .btn-success { background: #166534; color: #4ade80; }
-    .btn-warn { background: #78350f; color: #fbbf24; }
     .btn-ghost { background: #2d3148; color: #e2e8f0; }
     .btn-sm { padding: 5px 10px; font-size: 12px; }
 
@@ -334,7 +333,6 @@
     .empty { text-align: center; padding: 40px 24px; color: var(--faint); font-size: 13px; line-height: 1.6; }
     .empty .empty-icon { display: block; font-size: 26px; margin-bottom: var(--s2); opacity: .65; }
     .empty strong { display: block; color: var(--muted); font-size: 14px; font-weight: 600; margin-bottom: 2px; }
-    .empty-row td { text-align: center; color: var(--faint); }
 
     .refresh-btn {
       background: none;
@@ -403,7 +401,6 @@
       background: var(--panel-2);
     }
     .adv-name { display: block; color: #fff; font-weight: 600; }
-    .adv-sub { display: block; font-size: 11px; color: var(--faint); margin-top: 1px; }
 
     /* ── Inquiries ── */
     .inline-select {
@@ -435,6 +432,36 @@
     }
     .banner .banner-icon { font-size: 18px; }
 
+    /* ── Funnel drop-off rows ──
+       Reuses .bar-row for the stages; these sit between them, indented to line
+       up with the bar track (bar-label 160px + 12px gap). */
+    .funnel-drop {
+      display: flex;
+      align-items: center;
+      gap: var(--s2);
+      margin: 3px 0 3px 172px;
+      font-size: 11px;
+      color: var(--faint);
+      font-variant-numeric: tabular-nums;
+    }
+    .funnel-drop.worst { color: #fbbf24; font-weight: 600; }
+    .funnel-note { font-size: 11px; color: var(--faint); margin: -4px 0 var(--s4); }
+
+    /* ── Abuse flags banner — advisory only, amber not red ── */
+    .banner.flags {
+      align-items: flex-start;
+      background: #241f14;
+      border-color: #5c4a20;
+      border-left-color: #f59e0b;
+    }
+    .banner details { margin-top: var(--s2); }
+    .banner summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+    .banner summary:hover { color: var(--text); }
+    .flag-group { margin-top: var(--s3); }
+    .flag-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--dim); margin-bottom: var(--s1); }
+    .flag-group ul { margin: 0; padding-left: 18px; font-size: 12px; color: #cbd5e1; }
+    .flag-group li { margin-bottom: 3px; }
+
     /* ── Responsive (≤900px) ── */
     @media (max-width: 900px) {
       header { padding: var(--s3) var(--s4); }
@@ -447,6 +474,7 @@
       .stat-card .value { font-size: 20px; }
       .bar-label { width: 96px; }
       .bar-pct { display: none; }
+      .funnel-drop { margin-left: 108px; }
       .form-row { flex-direction: column; gap: 0; }
       .modal { padding: var(--s5) var(--s4); }
       .toolbar { flex-direction: column; align-items: stretch; gap: var(--s2); }
@@ -488,7 +516,24 @@
       <button class="btn btn-primary btn-sm" onclick="showPage('inquiries', document.getElementById('nav-inquiries'))">Review</button>
     </div>
 
-    <div class="stats-grid" id="overview-stats">
+    <!-- Abuse signals — heuristics only. Flagging surface, never an enforcement
+         one: no actions here, admins ban by hand from the Users tab. -->
+    <div class="banner flags" id="flags-banner" style="display:none">
+      <span class="banner-icon">🔎</span>
+      <div style="flex:1">
+        <strong id="flags-banner-summary"></strong>
+        <div class="stack-hint">
+          Heuristics, not verdicts — shared offices, VPNs and coffee shops trip these too.
+          Nothing has been actioned; review by hand in the <em>Users</em> tab.
+        </div>
+        <details>
+          <summary>Show detail</summary>
+          <div id="flags-banner-detail"></div>
+        </details>
+      </div>
+    </div>
+
+    <div class="stats-grid">
       <div class="stat-card">
         <div class="label">Total Impressions</div>
         <div class="value" id="stat-impressions">—</div>
@@ -528,6 +573,27 @@
         <div class="label">Today's Active Devs</div>
         <div class="value" id="stat-today-devs">—</div>
         <div class="sub">unique devs today</div>
+      </div>
+    </div>
+
+    <!-- Acquisition funnel + who's stuck in it -->
+    <div class="chart-section" id="funnel-section" style="display:none">
+      <div class="section-title">Acquisition Funnel</div>
+      <div id="funnel-chart"></div>
+      <div class="funnel-note" id="funnel-note"></div>
+
+      <div class="sub-section-title">Signed up, never activated</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Email</th>
+              <th>Company</th>
+              <th>Waiting</th>
+            </tr>
+          </thead>
+          <tbody id="funnel-stuck-tbody"></tbody>
+        </table>
       </div>
     </div>
 
@@ -1044,6 +1110,8 @@
         ? paise2rupee(pw.totalRupees * 100) + ' pending'
         : (pw.totalPaise != null ? paise2rupee(pw.totalPaise) + ' pending' : 'awaiting approval');
 
+      renderFunnel(d.funnel);
+
       // Task type breakdown
       const breakdown = d.taskTypeBreakdown || [];
       const bSection = document.getElementById('task-breakdown-section');
@@ -1097,6 +1165,140 @@
     } finally {
       setLoading('overview', false);
     }
+    loadFlags(); // optional panel, never blocks or breaks the rest of the page
+  }
+
+  // ── Acquisition funnel ───────────────────────────────────────
+  // Stage order is fixed; the point of the view is the gap between them.
+  // Raw event volume, NOT distinct people: one dev opening VS Code 50 times is 50
+  // ext pings, and .vsix hits include re-downloads and bots. Drop-off against the
+  // people stages below would mix units, so these deliberately get no drop rows.
+  const VOLUME_STATS = [
+    ['downloads', 'Downloads',  '.vsix requests — includes re-downloads and bots'],
+    ['ext_pings', 'Ext pings',  'activations by users who never signed in — not unique installs'],
+  ];
+  // People. Strict subsets of each other (every user is created from an invite),
+  // so drop-off between these is real.
+  const FUNNEL_STAGES = [
+    ['signups',   'Signups',    'joined the waitlist'],
+    ['activated', 'Activated',  'redeemed their invite'],
+    ['earning',   'Earning',    'have at least one impression'],
+  ];
+
+  function renderFunnel(f) {
+    const sec = document.getElementById('funnel-section');
+    if (!f || typeof f !== 'object') { sec.style.display = 'none'; return; }
+    sec.style.display = '';
+
+    const read = ([k, label, sub]) => ({ label, sub, n: Number(f[k]) || 0 });
+    const volume = VOLUME_STATS.map(read);
+    const stages = FUNNEL_STAGES.map(read);
+    // Each group scales to its own max — .vsix hits dwarf signups, and one shared
+    // scale would flatten the people bars to nothing.
+    const bar = (s, max) => `
+        <div class="bar-row">
+          <div class="bar-label" title="${s.sub}">${s.label}</div>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.round((s.n / max) * 100)}%"></div></div>
+          <div class="bar-count">${s.n.toLocaleString()}</div>
+        </div>`;
+
+    // drops[i] = people lost between stage i-1 and stage i
+    const drops = stages.map((s, i) => i === 0 ? null : stages[i - 1].n - s.n);
+    const worst = Math.max(0, ...drops.filter(d => d != null));
+
+    const volMax = Math.max(...volume.map(s => s.n), 1);
+    const max = Math.max(...stages.map(s => s.n), 1);
+    const html = volume.map(s => bar(s, volMax));
+    stages.forEach((s, i) => {
+      if (drops[i] != null) html.push(funnelDropRow(drops[i], stages[i - 1].n, drops[i] > 0 && drops[i] === worst));
+      html.push(bar(s, max));
+    });
+    document.getElementById('funnel-chart').innerHTML = html.join('');
+    document.getElementById('funnel-note').textContent =
+      'Downloads and ext pings count events, not people — a single dev generates many. Drop-off is only shown between the three people stages.';
+
+    renderStuck(Array.isArray(f.stuck) ? f.stuck : []);
+  }
+
+  function funnelDropRow(delta, prev, isWorst) {
+    if (delta <= 0) {
+      return `<div class="funnel-drop">↳ +${(-delta).toLocaleString()} more than the stage above</div>`;
+    }
+    const pct = prev > 0 ? ` — ${Math.round((delta / prev) * 100)}% of the stage above` : '';
+    return `
+      <div class="funnel-drop${isWorst ? ' worst' : ''}">
+        ↓ lost ${delta.toLocaleString()}${pct}
+        ${isWorst ? '<span class="pill pill-yellow">biggest drop</span>' : ''}
+      </div>`;
+  }
+
+  function renderStuck(rows) {
+    const tbody = document.getElementById('funnel-stuck-tbody');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty"><span class="empty-icon">🎉</span><strong>Nobody stuck</strong>Everyone who signed up has activated.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td>${esc(r.email || '—')}</td>
+        <td>${esc(r.company || '—')}</td>
+        <td>${(Number(r.days) || 0).toLocaleString()}d<div class="stack-hint">since ${fmtDate(r.created_at)}</div></td>
+      </tr>
+    `).join('');
+  }
+
+  // ── Abuse flags ──────────────────────────────────────────────
+  // Read-only heuristics. No actions here by design — see the banner copy.
+  // ponytail: missing/failed endpoint just hides the banner, it is optional.
+  async function loadFlags() {
+    const banner = document.getElementById('flags-banner');
+    try {
+      const res = await apiFetch('/api/flags');
+      if (!res.ok) throw new Error('flags ' + res.status);
+      const f = await res.json() || {};
+      const ips    = Array.isArray(f.shared_ips)    ? f.shared_ips    : [];
+      const bursts = Array.isArray(f.signup_bursts) ? f.signup_bursts : [];
+      const caps   = Array.isArray(f.cap_hitters)   ? f.cap_hitters   : [];
+
+      if (!ips.length && !bursts.length && !caps.length) { banner.style.display = 'none'; return; }
+
+      const parts = [];
+      if (ips.length)    parts.push(`${ips.length} shared IP${ips.length === 1 ? '' : 's'}`);
+      if (bursts.length) parts.push(`${bursts.length} signup burst${bursts.length === 1 ? '' : 's'}`);
+      if (caps.length)   parts.push(`${caps.length} repeat cap hitter${caps.length === 1 ? '' : 's'}`);
+      document.getElementById('flags-banner-summary').textContent = 'Worth a look: ' + parts.join(', ') + '.';
+
+      document.getElementById('flags-banner-detail').innerHTML = [
+        flagGroup('Shared IPs', 'more than 3 accounts seen from one address', ips, r =>
+          `<span class="mono">${esc(r.ip)}</span> — ${(Number(r.user_count) || 0).toLocaleString()} accounts` +
+          userIdHint(r.user_ids)),
+        flagGroup('Signup bursts', 'more than 3 signups from one address', bursts, r =>
+          `<span class="mono">${esc(r.ip)}</span> — ${(Number(r.count) || 0).toLocaleString()} signups`),
+        flagGroup('Repeat cap hitters', 'hit the daily impression cap on several days', caps, r =>
+          `user <span class="mono">${esc(String(r.user_id || '').slice(-8))}</span> — ${(Number(r.days_at_cap) || 0).toLocaleString()} days at cap`),
+      ].join('');
+
+      banner.style.display = '';
+    } catch(e) {
+      // Optional panel: a 404 (endpoint not deployed) or any error stays silent.
+      console.debug('Flags unavailable:', e);
+      banner.style.display = 'none';
+    }
+  }
+
+  function flagGroup(title, hint, rows, fmt) {
+    if (!rows.length) return '';
+    return `
+      <div class="flag-group">
+        <div class="flag-group-title">${title} <span style="text-transform:none;letter-spacing:0">— ${hint}</span></div>
+        <ul>${rows.map(r => `<li>${fmt(r)}</li>`).join('')}</ul>
+      </div>`;
+  }
+
+  function userIdHint(ids) {
+    if (!Array.isArray(ids) || !ids.length) return '';
+    const shown = ids.slice(0, 6).map(id => esc(String(id).slice(-8))).join(', ');
+    return `<div class="stack-hint">${shown}${ids.length > 6 ? ` +${ids.length - 6} more` : ''}</div>`;
   }
 
   function updateWithdrawalBadge(count) {
@@ -1145,7 +1347,7 @@
         return;
       }
       tbody.innerHTML = SPONSORS.map((s, i) => {
-        const dailyBudget = s.budget_paise_daily != null ? paise2rupee(s.budget_paise_daily) : '∞';
+        const dailyBudget = s.budget_paise_daily != null ? paise2rupee(s.budget_paise_daily) : 'default';
         const totalBudget = s.budget_paise_total != null ? paise2rupee(s.budget_paise_total) : '∞';
         const exhausted = s.budget_paise_total != null && (s.total_spend_paise || 0) >= s.budget_paise_total;
         const budgetDisplay = `
@@ -1543,14 +1745,14 @@
       return;
     }
     tbody.innerHTML = rows.map(w => `
-      <tr id="wd-row-${esc(w.id)}">
+      <tr>
         <td>${esc(w.email || w.user_id || '—')}</td>
         <td>${paise2rupee(w.amount_paise)}</td>
         <td><span class="mono">${esc(w.upi_id || '—')}</span></td>
         <td>${fmtDateTime(w.created_at)}</td>
         <td>
           <div class="td-actions">
-            <div class="ref-input-wrap" id="ref-wrap-${esc(w.id)}">
+            <div class="ref-input-wrap">
               <button class="btn btn-success btn-sm" onclick="approveWithdrawal('${esc(w.id)}')">Approve</button>
               <input type="text" id="ref-input-${esc(w.id)}" placeholder="Txn ref (optional)" />
             </div>
