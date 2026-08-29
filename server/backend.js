@@ -1587,10 +1587,17 @@ app.get("/api/overview", (req, res) => {
 
   // Download → install → signup → activate → earn. `stuck` is the actionable
   // end: invites that were emailed days ago and never redeemed.
+  //
+  // The whole block is optional: it reads `counters`, a table added later than the
+  // rest of this endpoint, so a DB that predates that migration would throw here and
+  // take the core stats down with it. The dashboard renders the funnel only when
+  // present, so degrade to null rather than 500 the entire overview.
+  let funnel = null;
+  try {
   const counterSum = (prefix) => db.prepare(
     "SELECT COALESCE(SUM(n), 0) AS n FROM counters WHERE name LIKE ?"
   ).get(prefix + ":%").n;
-  const funnel = {
+  funnel = {
     downloads: counterSum("vsix_download"),
     ext_pings: counterSum("ext_ping_anon"),
     signups:   db.prepare("SELECT COUNT(*) AS n FROM beta_invites").get().n,
@@ -1603,6 +1610,9 @@ app.get("/api/overview", (req, res) => {
        ORDER BY created_at DESC LIMIT 50`
     ).all(),
   };
+  } catch (e) {
+    console.error("[overview] funnel unavailable:", e.message);
+  }
 
   res.json({
     totalImpressions, totalClicks, uniqueUsers, activeSponsors, totalUsers,
