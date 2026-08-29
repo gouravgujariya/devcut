@@ -33,10 +33,22 @@ npm-debug.log*
 # graphify knowledge graph (generated, not source)
 graphify-out/
 
+# Agent/skill tooling — local developer tooling, never part of the product.
+# Directory rules, because the *.md denylist below cannot reach a nested
+# SKILL.md once its directory has been added.
+.agents/
+.claude/skills/
+.claude/agents/
+
 # Notes & data — denylist, NOT a by-name list. Every new strategy/outreach file
 # would otherwise ship silently: devcut_outreach_devs.csv leaked real developers'
 # private email addresses into the 0.1.4 package before this rule existed.
 # Only README.md ships (it is the extension's description page).
+#
+# NOTE: these rules only affect UNTRACKED files. Anything already committed keeps
+# being tracked until `git rm --cached <file>` removes it from the index — which is
+# why INDIA-STRATEGY.md, idea.md, issues.md, SCALE-PLAN.md and the .claude/skills
+# markdown had to be untracked explicitly rather than just listed here.
 *.md
 !README.md
 *.csv

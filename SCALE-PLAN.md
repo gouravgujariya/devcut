@@ -1,2 +1,0 @@
-- here once installed the add will start and differenet window different add
-- get the adds
