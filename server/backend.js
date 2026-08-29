@@ -168,7 +168,13 @@ const corsMw = (req, res, next) => {
 };
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+
+// The public marketing site is what devcut.co.in must serve at "/". server/public/
+// holds exactly one file — the admin dashboard — so mounting it here put the admin
+// panel on the apex domain for every visitor. The admin is reachable at /admin only
+// (see the route near the bottom of this file); it is a single self-contained HTML
+// file, so it needs no static mount of its own.
+app.use(express.static(path.join(__dirname, "..", "landing")));
 
 // Funnel counters — see the `counters` table in db.js.
 const bumpCounterStmt = db.prepare(
@@ -200,7 +206,9 @@ app.get("/site/devcut-latest.vsix", globalRateLimit, (req, res, next) => {
   next();
 });
 
-// Landing pages at /site/ — doesn't collide with admin panel at /
+// Same landing pages also stay at /site/ — the OAuth redirect target
+// (OAUTH_DEFAULT_NEXT) and the .vsix download counter above both use that prefix,
+// as do any links already in the wild.
 app.use("/site", express.static(path.join(__dirname, "..", "landing")));
 
 // ─── Public extension API (/v1/) ──────────────────────────────────────────────
