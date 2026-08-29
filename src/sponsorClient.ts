@@ -84,10 +84,6 @@ export class SponsorClient {
     this.token = tokenGetter;
   }
 
-  setTokenGetter(fn: () => Promise<string | undefined>): void {
-    this.token = fn;
-  }
-
   /**
    * Definitive session-liveness check. `false` only on a real 401/403 (session dead —
    * revoked, banned, or account disabled, since tokens never expire on their own). `undefined`
@@ -158,7 +154,9 @@ export class SponsorClient {
    *  never activated deserves to hear that a newer build exists. */
   async fetchUpdates(): Promise<UpdateInfo | undefined> {
     try {
-      const data = await this.request("GET", "/v1/updates", undefined, { skipAuth: true });
+      // ponytail: src=ext is a static marker, no user data — the server counts it as an
+      // anonymous install ping only when this (unauthenticated) call has no Authorization header.
+      const data = await this.request("GET", "/v1/updates?src=ext", undefined, { skipAuth: true });
       if (!data) return undefined;
       return JSON.parse(data) as UpdateInfo;
     } catch {
@@ -267,15 +265,6 @@ export class SponsorClient {
       return JSON.parse(data);
     } catch {
       return undefined;
-    }
-  }
-
-  async leaveTeam(): Promise<boolean> {
-    try {
-      const data = await this.request("DELETE", "/v1/teams/leave");
-      return !!data;
-    } catch {
-      return false;
     }
   }
 

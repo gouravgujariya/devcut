@@ -47,7 +47,7 @@ export class AuthStore {
 
   private mirrorSessionFile(token: string, userId: string): void {
     try {
-      const backendUrl = vscode.workspace.getConfiguration("devcut").get<string>("backendUrl", "http://localhost:3000");
+      const backendUrl = vscode.workspace.getConfiguration("devcut").get<string>("backendUrl", "https://waitwage-production.up.railway.app");
       fs.mkdirSync(this.context.globalStorageUri.fsPath, { recursive: true });
       fs.writeFileSync(this.sessionFilePath(), JSON.stringify({ token, userId, backendUrl }), { mode: 0o600 });
       fs.chmodSync(this.sessionFilePath(), 0o600); // mode above only applies on create — fix pre-existing 664 mirrors

@@ -11,7 +11,7 @@
     "url": "https://github.com/gouravgujariya/waitwage"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.93.0"
   },
   "categories": [
     "Other"
@@ -113,13 +113,13 @@
         },
         "devcut.idleAdsEnabled": {
           "type": "boolean",
-          "default": false,
-          "description": "Also show sponsored lines while VS Code is idle (window focused, no typing). Idle ads pay a lower rate than build ads, rotate slowly, and disappear the moment you touch the keyboard. Off by default — turn it on to earn while you read or think."
+          "default": true,
+          "description": "Also show sponsored lines while VS Code is idle (window focused, no typing). This is what earns you money while an AI agent works, a build runs in another window, or you read. Idle ads pay a lower rate than build ads, rotate slowly, and disappear the moment you touch the keyboard. Turn it off to only earn during detected builds."
         },
         "devcut.idleMinutes": {
           "type": "number",
-          "default": 5,
-          "description": "Minutes of no editor, terminal, or selection activity before idle ads start. Only applies when devcut.idleAdsEnabled is on."
+          "default": 1,
+          "description": "Minutes of no editor, terminal, or selection activity before idle ads start (minimum 0.5). Defaults to 1 so a normal AI-agent turn is long enough to count. Only applies when devcut.idleAdsEnabled is on."
         },
         "devcut.idleAdRotationSeconds": {
           "type": "number",
@@ -136,6 +136,7 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
+    "test": "npm run compile && node test-tasktypes.js && node server/test-api.js",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
     "package": "vsce package",
@@ -143,7 +144,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.93.0",
     "typescript": "^5.4.0",
     "@vscode/vsce": "^2.24.0"
   }
