@@ -288,7 +288,7 @@ async function main() {
   // ════════════════════════════════════════════════════════════════════════════
   const IP = { hdr: "10.9.0.1", sess: "10.9.0.2", forge: "10.9.0.3", pin: "10.9.0.4",
                caps: "10.9.0.5", money: "10.9.0.6", life: "10.9.0.7", invite: "10.9.0.8",
-               signup: "10.9.0.9", drift: "10.9.0.10" };
+               signup: "10.9.0.9", drift: "10.9.0.10", click: "10.9.0.11" };
 
   let inviteSeq = 0;
   const newUser = async (ip) => {
@@ -502,7 +502,79 @@ async function main() {
     assert.strictEqual(capped.status, 429, "the 501st impression of the day must 429, got " + capped.status);
     assert.strictEqual(capped.body.error, "rate_limit_exceeded", "the daily cap must report rate_limit_exceeded");
     db.prepare("DELETE FROM impressions WHERE user_id = ?").run(capUser.userId); // don't skew later aggregates
+
+    // Rupee cap. The row cap alone bounds count, not money: a scripted caller can
+    // re-roll /v1/sponsor-line until the top-paying sponsor comes up and redeem only
+    // that one, so extraction would scale with the best advertiser's bid. 250 rows at
+    // 60p is 15000p — under the 500-row cap, over the 12500p ceiling, so only the
+    // rupee cap can answer here.
+    const richUser = await newUser(IP.caps);
+    const rich1 = await api("GET", "/v1/sponsor-line", undefined, richUser.token, IP.caps);
+    assert.strictEqual((await api("POST", "/v1/impressions", { token: rich1.body.impressionToken }, richUser.token, IP.caps)).status, 200,
+      "first impression must credit before the rupee cap fills");
+    backdate.run(richUser.userId);
+    const richFill = db.prepare("INSERT INTO impressions (user_id, sponsor_id, payout_paise, bid_paise, ts) VALUES (?,?,?,?,unixepoch() - 60)");
+    db.transaction(() => { for (let i = 0; i < 250; i++) richFill.run(richUser.userId, "sponsor-cap", 60, 0); })();
+    assert.ok(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE user_id = ?").get(richUser.userId).n < 500,
+      "the rupee-cap fixture must stay under the row cap, or it proves nothing");
+    const rich2 = await api("GET", "/v1/sponsor-line", undefined, richUser.token, IP.caps);
+    const richCapped = await api("POST", "/v1/impressions", { token: rich2.body.impressionToken }, richUser.token, IP.caps);
+    assert.strictEqual(richCapped.status, 429, "past the daily rupee ceiling must 429, got " + richCapped.status);
+    assert.strictEqual(richCapped.body.error, "daily_earnings_cap", "the rupee cap must report daily_earnings_cap");
+    db.prepare("DELETE FROM impressions WHERE user_id = ?").run(richUser.userId);
   }
+
+  // A sponsor created with no explicit budget must still stop at the default
+  // ceiling — NULL used to mean unlimited, which made payout liability unbounded.
+  db.exec("UPDATE sponsors SET active = 0");
+  sponsor("sponsor-nobudget", { payout_paise: 25, bid_paise: 42 });
+  db.prepare("UPDATE sponsors SET budget_paise_daily = NULL, budget_paise_total = NULL WHERE id = 'sponsor-nobudget'").run();
+  const defUser = await newUser(IP.caps);
+  const defLine = await api("GET", "/v1/sponsor-line", undefined, defUser.token, IP.caps);
+  assert.ok(defLine.body.impressionToken, "a budgetless sponsor must still serve below the default ceiling");
+  // Spend the default ceiling on someone else's rows, then confirm it stops serving.
+  const burn = db.prepare("INSERT INTO impressions (user_id, sponsor_id, payout_paise, bid_paise, ts) VALUES (?,?,?,?,unixepoch())");
+  db.transaction(() => { for (let i = 0; i < 2500; i++) burn.run(defUser.userId, "sponsor-nobudget", 0, 42); })();
+  const exhausted = await api("GET", "/v1/sponsor-line", undefined, defUser.token, IP.caps);
+  // No eligible sponsor answers with an empty body, not a line with no token.
+  assert.ok(!exhausted.body || !exhausted.body.impressionToken,
+    "a budgetless sponsor past the default daily ceiling must stop serving: " + JSON.stringify(exhausted.body));
+  db.prepare("DELETE FROM impressions WHERE user_id = ?").run(defUser.userId);
+
+  // ── clicks: CTR is advertiser-facing revenue data, not a vanity metric ────
+  db.exec("UPDATE sponsors SET active = 0");
+  sponsor("sponsor-click", { payout_paise: 25, bid_paise: 42 });
+  const clickUser = await newUser(IP.click);
+
+  // Forgery: sponsor ids leak via /v1/sponsor-line, so a click must not be
+  // accepted from someone who was never served that line.
+  const forged = await api("POST", "/v1/clicks", { lineId: "sponsor-click" }, clickUser.token, IP.click);
+  assert.strictEqual(forged.status, 400, "a click with no matching impression must 400, got " + forged.status);
+  assert.strictEqual(forged.body.error, "no_matching_impression", "forged clicks must report no_matching_impression");
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM clicks WHERE user_id = ?").get(clickUser.userId).n, 0,
+    "a rejected click must not be inserted");
+
+  // A sponsor that does not exist has no impression either — same rejection.
+  const ghost = await api("POST", "/v1/clicks", { lineId: "sponsor-does-not-exist" }, clickUser.token, IP.click);
+  assert.strictEqual(ghost.status, 400, "a click on an unknown sponsor must 400, got " + ghost.status);
+
+  // Real path: serve and redeem an impression, then the click is legitimate.
+  const clickLine = await api("GET", "/v1/sponsor-line", undefined, clickUser.token, IP.click);
+  assert.strictEqual((await api("POST", "/v1/impressions", { token: clickLine.body.impressionToken }, clickUser.token, IP.click)).status, 200,
+    "the click fixture needs a credited impression");
+  const realClick = await api("POST", "/v1/clicks", { lineId: "sponsor-click" }, clickUser.token, IP.click);
+  assert.strictEqual(realClick.status, 200, "a click after a real impression must succeed: " + JSON.stringify(realClick.body));
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM clicks WHERE user_id = ?").get(clickUser.userId).n, 1,
+    "a legitimate click must be recorded exactly once");
+
+  // Flood: one impression must not license unlimited clicks.
+  const flood = await api("POST", "/v1/clicks", { lineId: "sponsor-click" }, clickUser.token, IP.click);
+  assert.strictEqual(flood.status, 429, "a repeat click inside the dedup window must 429, got " + flood.status);
+  assert.strictEqual(flood.body.error, "click_too_fast", "click flooding must report click_too_fast");
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM clicks WHERE user_id = ?").get(clickUser.userId).n, 1,
+    "a flooded click must not be inserted");
+  db.prepare("DELETE FROM impressions WHERE user_id = ?").run(clickUser.userId);
+  db.prepare("DELETE FROM clicks WHERE user_id = ?").run(clickUser.userId);
 
   // ── withdrawals: the money controls ───────────────────────────────────────
   const wUser = await newUser(IP.money);
@@ -666,6 +738,60 @@ async function main() {
   const drifted = db.prepare("SELECT COALESCE(SUM(bid_paise), 0) AS spend FROM impressions WHERE sponsor_id = 'sponsor-drift'").get().spend;
   assert.ok(drifted <= 150,
     "recorded spend must never exceed the lifetime budget, got " + drifted + "p");
+
+  // ── email hygiene: undeliverable domains never mint an invite code ────────
+  const IP_MAIL = "10.9.0.11";
+  const disposable = await api("POST", "/v1/public/signup",
+    { name: "Throw Away", email: "x@mailinator.com", company: "Acme" }, undefined, IP_MAIL);
+  assert.strictEqual(disposable.status, 400, "a disposable domain must be refused: " + JSON.stringify(disposable.body));
+  assert.strictEqual(disposable.body.error, "email_undeliverable", "a disposable domain must report email_undeliverable");
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM beta_invites WHERE email LIKE '%@mailinator.com'").get().n, 0,
+    "a refused signup must not leave an invite row behind");
+
+  // A normal domain still gets through. The MX check fails open, so this holds
+  // on a box with no DNS too — and the signup IP lands in beta_invites.ip.
+  const realSignup = await api("POST", "/v1/public/signup",
+    { name: "Real Dev", email: "realdev@gmail.com", company: "Acme" }, undefined, IP_MAIL);
+  assert.strictEqual(realSignup.status, 200, "a deliverable domain must still sign up: " + JSON.stringify(realSignup.body));
+  assert.ok(!("code" in realSignup.body), "signup must never echo the invite code — it is the login credential");
+  assert.strictEqual(db.prepare("SELECT ip FROM beta_invites WHERE email = ?").get("realdev@gmail.com").ip, IP_MAIL,
+    "signup must record req.ip");
+
+  // ── advertiser-inquiry is rate limited: it fires two Resend emails per call ─
+  // Raw fetch, not api(): express-rate-limit's 429 body is text, not JSON.
+  const IP_ADV = "10.9.0.12";
+  let advStatus = 0;
+  for (let i = 0; i < 11; i++) {
+    // Invalid body on purpose — the limiter runs first, so nothing is inserted or emailed.
+    advStatus = (await fetch(base + "/v1/public/advertiser-inquiry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": IP_ADV },
+      body: "{}",
+    })).status;
+  }
+  assert.strictEqual(advStatus, 429, "the 11th advertiser inquiry from one IP must hit authRateLimit, got " + advStatus);
+
+  // ── funnel counters + /api/flags (the admin dashboard renders both) ────────
+  const funnel = (await api("GET", "/api/overview")).body.funnel;
+  assert.ok(funnel, "/api/overview must expose a funnel block");
+  for (const k of ["downloads", "ext_pings", "signups", "activated", "earning", "stuck"]) {
+    assert.ok(k in funnel, "funnel missing key: " + k);
+  }
+  assert.ok(Array.isArray(funnel.stuck), "funnel.stuck must be an array");
+  assert.ok(funnel.signups > 0, "funnel.signups must count beta_invites");
+
+  // The .vsix route counts and then hands off to express.static.
+  await fetch(base + "/site/devcut-latest.vsix");
+  // ?src=ext with no Authorization is the "installed but never signed in" ping.
+  await fetch(base + "/v1/updates?src=ext", { headers: { "X-Forwarded-For": IP_MAIL } });
+  const funnel2 = (await api("GET", "/api/overview")).body.funnel;
+  assert.strictEqual(funnel2.downloads, funnel.downloads + 1, "a .vsix GET must bump vsix_download");
+  assert.strictEqual(funnel2.ext_pings, funnel.ext_pings + 1, "an anonymous ?src=ext ping must bump ext_ping_anon");
+
+  const flags = (await api("GET", "/api/flags")).body;
+  for (const k of ["shared_ips", "signup_bursts", "cap_hitters"]) {
+    assert.ok(Array.isArray(flags[k]), "/api/flags." + k + " must be an array, got " + JSON.stringify(flags[k]));
+  }
 
   // ── admin auth fails closed ────────────────────────────────────────────────
   const noKey = await fetch(base + "/api/overview");

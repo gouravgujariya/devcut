@@ -66,10 +66,6 @@ export class EarningsStore {
     this.context.globalState.update(KEY_SERVER_FETCHED, Date.now());
   }
 
-  getServerBalance(): number | undefined {
-    return this.context.globalState.get<number>(KEY_SERVER_PAISE);
-  }
-
   getServerBalanceFetchedAt(): number {
     return this.context.globalState.get<number>(KEY_SERVER_FETCHED, 0);
   }

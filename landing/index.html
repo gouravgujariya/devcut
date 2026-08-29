@@ -533,6 +533,11 @@
     select.form-input { cursor: pointer; }
     select.form-input option { background: var(--surface2); }
     #submitBtn:disabled { opacity: .6; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+    /* same values the install-section kbds already carry inline */
+    kbd {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+      padding: .15rem .45rem; font-family: monospace; font-size: .88em; white-space: nowrap;
+    }
 
     @media (max-width: 600px) {
       #codeForm > div[style*="grid-template-columns:1fr 1fr"] {
@@ -801,8 +806,7 @@
       <li>Pick the file you downloaded, then reload the window.</li>
     </ol>
 
-    <!-- TODO(deploy): host devcut-latest.vsix at this path (or point href at GitHub Releases). The .vsix is gitignored, so hosting it is a deploy decision — see handoff notes. -->
-    <a class="btn-primary" href="/site/devcut-latest.vsix" download>⬇ Download DevCut (.vsix)</a>
+    <a class="btn-primary" href="https://github.com/gouravgujariya/waitwage/releases/latest" rel="noopener">⬇ Download DevCut (.vsix)</a>
   </div>
 </section>
 
@@ -1175,10 +1179,31 @@
         </p>
       </form>
 
-      <div id="formSuccess" style="display:none;text-align:center;padding:.6rem 0;">
-        <div style="font-size:1.8rem;margin-bottom:.4rem;" id="successIcon">🎉</div>
-        <div style="font-weight:700;color:var(--green);font-size:1.05rem;" id="successTitle">Your code is on its way!</div>
-        <div style="color:var(--muted);font-size:.9rem;margin-top:.4rem;" id="successMsg">Check your inbox — paste the code into DevCut in VS Code, then <a href="login.html" style="color:var(--blue);">sign in here</a> to watch your earnings.</div>
+      <div id="formSuccess" style="display:none;padding:.6rem 0;">
+        <div style="text-align:center;">
+          <div style="font-size:1.8rem;margin-bottom:.4rem;" id="successIcon">🎉</div>
+          <div style="font-weight:700;color:var(--green);font-size:1.05rem;" id="successTitle">You're in — nothing to type.</div>
+          <div style="color:var(--muted);font-size:.9rem;margin-top:.4rem;" id="successMsg">Install the extension, run <strong style="color:var(--text);">DevCut: Sign in with GitHub</strong>. That's the whole setup.</div>
+        </div>
+
+        <ol style="
+          background:var(--surface2);border:1px solid var(--border);
+          border-radius:12px;padding:1.1rem 1.3rem 1.1rem 2.6rem;
+          text-align:left;line-height:1.85;color:var(--muted);
+          font-size:.9rem;margin:1.3rem 0 0;
+        ">
+          <li><strong style="color:var(--text);">Install the extension.</strong>
+            <a href="https://github.com/gouravgujariya/waitwage/releases/latest" rel="noopener" style="color:var(--blue);">Download the .vsix</a>, then in VS Code press
+            <kbd>Ctrl+Shift+P</kbd> (<kbd>⌘⇧P</kbd> on Mac) and run
+            <strong style="color:var(--text);">Extensions: Install from VSIX…</strong></li>
+          <li><strong style="color:var(--text);">Run <code>DevCut: Sign in with GitHub</code></strong> from that same command palette.
+            One click and you're in — no code needed.</li>
+        </ol>
+
+        <p style="color:var(--muted);font-size:.78rem;line-height:1.6;margin:.9rem 0 0;opacity:.8;">
+          <span id="successFallback">We've also emailed you an invite code — use it if you'd rather not sign in with GitHub, or if you don't have a GitHub account.</span>
+          <a href="login.html" style="color:var(--muted);text-decoration:underline;">Watch your earnings →</a>
+        </p>
       </div>
       <div id="formError" style="display:none;margin-top:1rem;color:var(--orange);font-size:.88rem;"></div>
     </div>
@@ -1526,18 +1551,23 @@ setInterval(() => {
 
       if (res.ok) {
         form.style.display = 'none';
-        // Tailor message based on what backend reported
+        // The GitHub steps in the panel are the same for everyone — only the
+        // headline and the quiet emailed-code fallback line change.
         if (body.resent) {
           document.getElementById('successIcon').textContent = '📬';
-          document.getElementById('successTitle').textContent = 'You already have a code!';
-          document.getElementById('successMsg').textContent = body.email_sent
-            ? 'We resent your invite code — check your inbox.'
-            : 'Your code already exists — check your inbox, or sign in with it.';
+          document.getElementById('successTitle').textContent = "You already have a code — you still don't need it.";
+          document.getElementById('successMsg').textContent = "Install the extension, run DevCut: Sign in with GitHub. That's the whole setup.";
+          document.getElementById('successFallback').textContent = body.email_sent
+            ? "We've also resent your invite code — check your inbox and use it if you'd rather not sign in with GitHub, or if you don't have a GitHub account."
+            : "Your invite code already exists — check your inbox for it if you'd rather not sign in with GitHub, or if you don't have a GitHub account.";
         } else if (!body.email_sent) {
-          document.getElementById('successMsg').textContent = 'Registered! Your invite code will be emailed to you shortly.';
+          document.getElementById('successFallback').textContent = "Your invite code will be emailed to you shortly — use it if you'd rather not sign in with GitHub, or if you don't have a GitHub account.";
         }
         successEl.style.display = 'block';
         fetchCount();
+      } else if (body.error === 'email_undeliverable') {
+        document.getElementById('f-email').focus();
+        throw new Error("That email address doesn't look reachable. Please check it and try again.");
       } else {
         throw new Error(body.error || body.message || 'Something went wrong. Please try again.');
       }

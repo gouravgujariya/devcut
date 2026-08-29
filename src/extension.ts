@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { detectTaskType, isReplCommand } from "./taskTypes";
 import { SponsorClient, isNewerVersion } from "./sponsorClient";
 import { EarningsStore } from "./earningsStore";
 import { AuthStore } from "./authStore";
@@ -33,52 +34,6 @@ let pendingUpdateVersion: string | undefined;
 let deactivated = false;
 
 // Maps terminal command prefixes → task type label sent to backend for targeting
-const TASK_TYPE_MAP: Array<[string, string]> = [
-  // AI tools (Claude Code support — v1.1)
-  ["claude ",      "claude"],
-  ["aider ",       "aider"],
-  ["cursor ",      "cursor"],
-  // Node / JS
-  ["npm ",         "npm"],
-  ["yarn ",        "yarn"],
-  ["pnpm ",        "pnpm"],
-  ["npx ",         "npx"],
-  // Python
-  ["pip ",         "pip"],
-  ["pip3 ",        "pip"],
-  ["poetry ",      "python"],
-  ["uv ",          "python"],
-  // Containers / infra
-  ["docker ",      "docker"],
-  ["kubectl ",     "k8s"],
-  ["terraform ",   "terraform"],
-  // Build systems
-  ["gradle ",      "gradle"],
-  ["mvn ",         "maven"],
-  ["cargo ",       "rust"],
-  ["go build",     "go"],
-  ["make ",        "make"],
-  ["cmake ",       "cmake"],
-  // VCS
-  ["git clone",    "git"],
-  ["git pull",     "git"],
-  ["git fetch",    "git"],
-  // Ruby / PHP
-  ["bundle install", "ruby"],
-  ["composer install", "php"],
-];
-
-function detectTaskType(cmd: string): string | undefined {
-  const trimmed = cmd.trimStart();
-  for (const [prefix, type] of TASK_TYPE_MAP) {
-    if (trimmed.startsWith(prefix)) return type;
-  }
-  return undefined;
-}
-
-function shouldTrackCommand(cmd: string): boolean {
-  return detectTaskType(cmd) !== undefined;
-}
 
 /**
  * Tries to recover a dead session without bothering the user: if VS Code already
@@ -106,7 +61,7 @@ export function activate(context: vscode.ExtensionContext) {
   earningsStore = new EarningsStore(context);
 
   sponsorClient = new SponsorClient(
-    config.get<string>("backendUrl", "http://localhost:3000"),
+    config.get<string>("backendUrl", "https://waitwage-production.up.railway.app"),
     earningsStore.getUserId(),
     () => authStore.getToken()
   );
@@ -518,6 +473,7 @@ export function activate(context: vscode.ExtensionContext) {
         (e: vscode.TerminalShellExecutionStartEvent) => {
           bumpActivity();
           const cmd = e.execution.commandLine.value.trimStart();
+          if (isReplCommand(cmd)) return; // see REPL_COMMANDS — idle detection covers these
           const taskType = detectTaskType(cmd);
           if (taskType && !activeExecutions.has(e.execution)) {
             activeExecutions.set(e.execution, taskType);
@@ -542,7 +498,13 @@ export function activate(context: vscode.ExtensionContext) {
   // Any sign of life re-arms the countdown and kills a running idle ad instantly.
 
   context.subscriptions.push(
-    vscode.workspace.onDidChangeTextDocument(() => bumpActivity()),
+    // Only the focused document counts as human activity. An agent (Claude Code in the
+    // sidebar, Copilot, aider) writing to background files used to reset the idle
+    // countdown, so the one moment idle ads exist to catch — you, waiting, while a
+    // machine works — was the one moment they could never fire.
+    vscode.workspace.onDidChangeTextDocument((e) => {
+      if (e.document === vscode.window.activeTextEditor?.document) bumpActivity();
+    }),
     vscode.window.onDidChangeActiveTextEditor(() => bumpActivity()),
     vscode.window.onDidChangeTextEditorSelection(() => bumpActivity()),
     vscode.window.onDidChangeWindowState(() => bumpActivity()),
@@ -610,7 +572,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (alive !== false) return; // true, or undefined (network issue) — don't act
       if (await attemptSilentRecovery(context)) return;
       const action = await vscode.window.showWarningMessage(
-        "DevCut: Session expired. Re-enter your invite code to continue earning.",
+        "DevCut: You've been signed out. Sign in again to keep earning.",
         "Re-activate", "Sign in with GitHub"
       );
       if (action === "Re-activate") {
@@ -657,12 +619,14 @@ function bumpActivity(): void {
 
   const config = vscode.workspace.getConfiguration("devcut");
   if (!config.get<boolean>("enabled", true)) return;
-  if (!config.get<boolean>("idleAdsEnabled", false)) return;
+  if (!config.get<boolean>("idleAdsEnabled", true)) return;
   if (activeTaskCount > 0) return;             // build ads always win
   if (!vscode.window.state.focused) return;    // window in the background — nobody is looking
   if (!authStore?.getUserId()) return;         // not registered → no ad, same as builds
 
-  const minutes = Math.max(1, config.get<number>("idleMinutes", 5));
+  // Floor of 30s, not 60s: an agent turn is tens of seconds, and a one-minute
+  // minimum could never fire inside one.
+  const minutes = Math.max(0.5, config.get<number>("idleMinutes", 1));
   idleTimer = setTimeout(() => {
     if (activeTaskCount > 0 || !vscode.window.state.focused) return;
     idleRotator = new AdRotator(adBar, sessionBar, sponsorClient, earningsStore, config, undefined, true);

@@ -1,6 +1,7 @@
 const express = require("express");
 const path = require("path");
 const { randomUUID, randomInt, randomBytes, createHash } = require("crypto");
+const dns = require("node:dns").promises;
 const { z } = require("zod");
 const db = require("./db");
 const { signImpressionToken, verifyImpressionToken } = require("./auth");
@@ -94,6 +95,45 @@ function canonicalEmail(email) {
   if (domain === "gmail.com" || domain === "googlemail.com") l = l.replace(/\./g, "");
   return `${l}@${domain}`;
 }
+// Throwaway domains that DO publish MX, so the DNS check below waves them through
+const DISPOSABLE_DOMAINS = new Set([
+  "mailinator.com", "guerrillamail.com", "yopmail.com", "10minutemail.com", "tempmail.com",
+  "throwawaymail.com", "sharklasers.com", "getnada.com", "temp-mail.org", "trashmail.com",
+]);
+// Domain → deliverable? The set of domains we ever see is tiny, so no TTL.
+const mxCache = new Map();
+
+// Can this domain receive mail at all? Fails OPEN: a DNS timeout, SERVFAIL or a
+// box with no network must never lock a real dev out of signup — only a
+// definitive "no such domain" / "no MX records" answer rejects.
+// ponytail: a static disposable list only catches the well-known ones; the real
+// fix is a Resend bounce webhook, add it when bounces actually show up.
+async function isRealEmailDomain(domain) {
+  const d = String(domain).toLowerCase().trim();
+  // Reject before touching the cache. An over-long name is not a hostname, and
+  // caching one would let an unauthenticated caller grow mxCache without bound —
+  // the key comes straight from a public request body.
+  if (d.length > 253) return false;
+  if (DISPOSABLE_DOMAINS.has(d)) return false;
+  if (mxCache.has(d)) return mxCache.get(d);
+
+  let ok = true;
+  try {
+    const mx = await dns.resolveMx(d);
+    // RFC 7505: a lone "." exchange is a null MX — the domain is explicitly
+    // saying it accepts no mail, same as publishing none at all.
+    ok = mx.some((r) => r.exchange && r.exchange !== ".");
+  } catch (e) {
+    // ENOTFOUND = NXDOMAIN, ENODATA = domain exists but publishes no MX,
+    // EBADNAME = not a resolvable name at all. None of them can receive mail.
+    ok = !["ENOTFOUND", "ENODATA", "NXDOMAIN", "EBADNAME"].includes(e.code);
+  }
+  // ponytail: crude flush rather than an LRU — bounds memory and clears stale negatives.
+  if (mxCache.size > 5000) mxCache.clear();
+  mxCache.set(d, ok);
+  return ok;
+}
+
 // Backfill canonical emails for invites created before the column existed
 {
   const upd = db.prepare("UPDATE beta_invites SET email_canonical = ? WHERE code = ?");
@@ -129,6 +169,37 @@ const corsMw = (req, res, next) => {
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+
+// Funnel counters — see the `counters` table in db.js.
+const bumpCounterStmt = db.prepare(
+  "INSERT INTO counters (name, n) VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET n = n + 1"
+);
+function bumpCounter(event) {
+  bumpCounterStmt.run(`${event}:${new Date().toISOString().slice(0, 10)}`);
+}
+
+// Global daily ceiling on outbound mail. A per-IP limit cannot protect this: the
+// advertiser-inquiry route mails an attacker-chosen address, so a rotating-IP
+// caller can still burn the Resend quota and get the sending domain blocklisted —
+// after which every real invite email fails silently. This bounds it regardless
+// of how many IPs are used.
+// ponytail: one flat cap across all mail; split per-route if it ever binds on real traffic.
+const EMAIL_DAILY_CAP = Number(process.env.EMAIL_DAILY_CAP || 300);
+const emailCountStmt = db.prepare("SELECT n FROM counters WHERE name = ?");
+function canSendEmail() {
+  const n = emailCountStmt.get(`email_sent:${new Date().toISOString().slice(0, 10)}`)?.n ?? 0;
+  if (n < EMAIL_DAILY_CAP) return true;
+  console.warn(`[email] daily cap ${EMAIL_DAILY_CAP} reached — suppressing send`);
+  return false;
+}
+
+// Count .vsix downloads before express.static below blindly serves the file.
+// Must stay above the /site mount — Express matches layers in registration order.
+app.get("/site/devcut-latest.vsix", globalRateLimit, (req, res, next) => {
+  bumpCounter("vsix_download");
+  next();
+});
+
 // Landing pages at /site/ — doesn't collide with admin panel at /
 app.use("/site", express.static(path.join(__dirname, "..", "landing")));
 
@@ -170,6 +241,9 @@ function versionIsNewer(a, b) {
 
 // GET /v1/updates  — extension changelog (public), so the client can nudge on a new version
 app.get("/v1/updates", (req, res) => {
+  // Every extension hits this on activation. Signed-out callers are the
+  // "installed but never signed in" bucket — the gap between download and signup.
+  if (req.query.src === "ext" && !req.headers["authorization"]) bumpCounter("ext_ping_anon");
   const rows = db.prepare("SELECT * FROM changelog_entries ORDER BY id DESC").all();
   const entries = rows.map(changelogEntryOut);
   // `latest` is the highest version, NOT the newest row: the admin panel can post a
@@ -249,6 +323,12 @@ const isGmailAddress = (e) => /@(gmail|googlemail)\.com$/.test(String(e).toLower
 // Verify a GitHub access token and pull the identity we key accounts on.
 // Returns { ok: true, githubId, email } or { ok: false, status, error }.
 async function fetchGithubIdentity(githubAccessToken) {
+  // GitHub counts even invalid-token calls against this server's 60/hr unauthenticated
+  // IP budget, so junk here would 403 every genuine sign-in. Shape-check before spending it.
+  // ponytail: matches today's gh*_ and classic 40-hex formats; widen if GitHub adds one.
+  if (!/^(gh[pousr]_[A-Za-z0-9]{20,}|[0-9a-f]{40})$/.test(String(githubAccessToken))) {
+    return { ok: false, status: 401, error: "invalid_github_token" };
+  }
   const ghHeaders = { Authorization: `Bearer ${githubAccessToken}`, "User-Agent": "DevCut", Accept: "application/vnd.github+json" };
 
   let ghUser;
@@ -676,6 +756,16 @@ function prefer(pool, fn) {
   return narrowed.length ? narrowed : pool;
 }
 
+// A sponsor with no explicit budget used to mean *unlimited*, which made payout
+// liability unbounded: impressions accrue real INR owed to devs with no ceiling on
+// what any advertiser can run up, and every live sponsor was created with NULL.
+// A missing budget now means this default rather than infinity — generous enough
+// not to disturb normal serving, finite enough that the worst case is a number.
+// ponytail: one flat default for every sponsor; give it a per-sponsor column if
+// campaigns ever legitimately need very different ceilings.
+const SPONSOR_DEFAULT_DAILY_PAISE = Number(process.env.SPONSOR_DEFAULT_DAILY_PAISE || 100000); // Rs 1000/day
+const effectiveDailyBudget = (s) => s.budget_paise_daily ?? SPONSOR_DEFAULT_DAILY_PAISE;
+
 // Per-sponsor spend in one GROUP BY (bid-denominated — budgets cap what advertisers pay,
 // not what devs are paid), instead of a query per sponsor.
 function spendBySponsor(todayOnly) {
@@ -708,7 +798,7 @@ app.get("/v1/sponsor-line", requireAuth, (req, res) => {
 
   // Filter out sponsors that have exceeded their daily or lifetime budget
   let eligible = allSponsors.filter(s => {
-    if (s.budget_paise_daily != null && (todaySpend[s.id] || 0) >= s.budget_paise_daily) return false;
+    if ((todaySpend[s.id] || 0) >= effectiveDailyBudget(s)) return false;
     if (s.budget_paise_total != null && (totalSpend[s.id] || 0) >= s.budget_paise_total) return false;
     return true;
   });
@@ -796,7 +886,7 @@ app.post("/v1/impressions", requireAuth, rateLimitImpressions, (req, res) => {
       const total = db.prepare(
         "SELECT COALESCE(SUM(bid_paise), 0) AS spend FROM impressions WHERE sponsor_id = ?"
       ).get(sponsor.id).spend;
-      if ((sponsor.budget_paise_daily != null && today + claims.bid > sponsor.budget_paise_daily) ||
+      if ((today + claims.bid > effectiveDailyBudget(sponsor)) ||
           (sponsor.budget_paise_total != null && total + claims.bid > sponsor.budget_paise_total)) {
         return true;
       }
@@ -816,12 +906,34 @@ app.post("/v1/impressions", requireAuth, rateLimitImpressions, (req, res) => {
 });
 
 // POST /v1/clicks
+// A click only means anything if this user was actually served this sponsor's line.
+// The route used to accept any string matching the id pattern, and sponsor ids leak
+// through /v1/sponsor-line — so one account could fabricate ~172k clicks/day against
+// any campaign: inflate your own to look renewable, or wreck a rival's to get it
+// audited. No payout rides on a click, but CTR is what advertisers renew on, which
+// makes this revenue data rather than a vanity metric.
+// ponytail: matches a recent impression instead of the token's jti, so it needs no
+// client change and extensions already in the wild keep working. Bind to the jti if
+// a strict 1:1 click-per-impression ever matters.
+const CLICK_IMPRESSION_WINDOW = 3600; // generous gap between seeing the line and clicking
+const CLICK_DEDUP_WINDOW = 60;        // the line rotates on this order — faster is a script
 app.post("/v1/clicks", requireAuth, (req, res) => {
   const parse = z.object({ lineId: z.string().regex(/^sponsor-[a-z0-9-]+$/) }).safeParse(req.body);
   if (!parse.success) return res.status(400).json({ error: "invalid body" });
+  const lineId = parse.data.lineId;
 
-  db.prepare("INSERT INTO clicks (user_id, sponsor_id) VALUES (?, ?)").run(req.userId, parse.data.lineId);
-  console.log(`[click] user=${req.userId} sponsor=${parse.data.lineId}`);
+  const served = db.prepare(
+    "SELECT 1 FROM impressions WHERE user_id = ? AND sponsor_id = ? AND ts > unixepoch() - ?"
+  ).get(req.userId, lineId, CLICK_IMPRESSION_WINDOW);
+  if (!served) return res.status(400).json({ error: "no_matching_impression" });
+
+  const recent = db.prepare(
+    "SELECT 1 FROM clicks WHERE user_id = ? AND sponsor_id = ? AND ts > unixepoch() - ?"
+  ).get(req.userId, lineId, CLICK_DEDUP_WINDOW);
+  if (recent) return res.status(429).json({ error: "click_too_fast" });
+
+  db.prepare("INSERT INTO clicks (user_id, sponsor_id) VALUES (?, ?)").run(req.userId, lineId);
+  console.log(`[click] user=${req.userId} sponsor=${lineId}`);
   res.json({ ok: true });
 });
 
@@ -1023,6 +1135,11 @@ app.get("/v1/teams/me", requireAuth, (req, res) => {
 // ─── Public Stats Dashboard ───────────────────────────────────────────────────
 
 // GET /v1/public/stats  — shareable dashboard numbers (no auth, aggregate only)
+// ponytail: 12 queries, 6 of them full scans of `impressions`, all synchronous —
+// measured ~810ms at 1M rows, which blocks the event loop ahead of /v1/impressions.
+// Costs nothing at today's row count. A 60s response cache fixes it in 3 lines, but
+// it must invalidate on withdrawal-status changes or public stats go stale (there is
+// a test asserting exactly that). Add it, with invalidation, before impressions pass ~100k.
 app.get("/v1/public/stats", (req, res) => {
   const totalImpressions = db.prepare("SELECT COUNT(*) as n FROM impressions").get().n;
   // Accrued earnings (what devs have racked up) — used for the per-dev average
@@ -1176,7 +1293,7 @@ function buildInviteEmail(rawName, code) {
 app.post("/v1/public/signup", authRateLimit, async (req, res) => {
   const parse = z.object({
     name:    z.string().min(1).max(120),
-    email:   z.string().email(),
+    email:   z.string().email().max(254),
     role:    z.string().max(64).optional(),
     github:  z.string().max(64).optional().nullable(),
     company: z.string().min(1).max(120),
@@ -1187,6 +1304,9 @@ app.post("/v1/public/signup", authRateLimit, async (req, res) => {
 
   const { name, email, role, github, company, source } = parse.data;
   const normalizedEmail = email.toLowerCase().trim();
+  if (!await isRealEmailDomain(normalizedEmail.split("@")[1])) {
+    return res.status(400).json({ error: "email_undeliverable" });
+  }
   const canonical = canonicalEmail(email);
   console.log(`[signup] meta role=${role || "-"} github=${github || "-"} company=${company} source=${source || "-"}`);
 
@@ -1198,7 +1318,8 @@ app.post("/v1/public/signup", authRateLimit, async (req, res) => {
   if (existing) {
     // Resend their code
     let email_sent = false;
-    if (resend) {
+    if (resend && canSendEmail()) {
+      bumpCounter("email_sent");
       const result = await resend.emails.send({
         from: "DevCut <techsupport@devcut.co.in>",
         to: existing.email,
@@ -1214,8 +1335,8 @@ app.post("/v1/public/signup", authRateLimit, async (req, res) => {
   const code = generateInviteCode();
 
   try {
-    db.prepare("INSERT INTO beta_invites (code, email, email_canonical, company, role, github, source) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .run(code, normalizedEmail, canonical, company.trim(), role || null, github || null, source || null);
+    db.prepare("INSERT INTO beta_invites (code, email, email_canonical, company, role, github, source, ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(code, normalizedEmail, canonical, company.trim(), role || null, github || null, source || null, req.ip || null);
   } catch (e) {
     console.error("[signup] db error:", e.message);
     return res.status(500).json({ error: "signup_failed" });
@@ -1223,7 +1344,8 @@ app.post("/v1/public/signup", authRateLimit, async (req, res) => {
 
   // Send invite email via Resend
   let email_sent = false;
-  if (resend) {
+  if (resend && canSendEmail()) {
+    bumpCounter("email_sent");
     const { error } = await resend.emails.send({
       from: "DevCut <techsupport@devcut.co.in>",
       to: normalizedEmail,
@@ -1237,19 +1359,21 @@ app.post("/v1/public/signup", authRateLimit, async (req, res) => {
       email_sent = true;
     }
   } else {
-    console.warn("[signup] RESEND_API_KEY not set — email not sent for", normalizedEmail, code);
+    console.warn("[signup] RESEND_API_KEY not set — email not sent for", normalizedEmail);
   }
 
-  console.log(`[signup] new signup email=${normalizedEmail} code=${code}`);
+  console.log(`[signup] new signup email=${normalizedEmail}`);
   res.json({ ok: true, email_sent, ...(!email_sent && { note: "Email delivery pending" }) });
 });
 
 // POST /v1/public/advertiser-inquiry  — advertiser sign-up form (no auth)
-app.post("/v1/public/advertiser-inquiry", async (req, res) => {
+// authRateLimit, not the loose global 120/min: each accepted request fires two
+// Resend emails, one of them to an attacker-supplied address.
+app.post("/v1/public/advertiser-inquiry", authRateLimit, async (req, res) => {
   const parse = z.object({
     company:         z.string().min(1).max(120),
     contact_name:    z.string().min(1).max(120),
-    email:           z.string().email(),
+    email:           z.string().email().max(254),
     website:         httpUrl.optional().or(z.literal("")),
     ad_text:         z.string().min(5).max(160),
     destination_url: httpUrl,
@@ -1262,6 +1386,9 @@ app.post("/v1/public/advertiser-inquiry", async (req, res) => {
   if (!parse.success) return res.status(400).json({ error: "invalid_body", details: parse.error.flatten() });
 
   const d = parse.data;
+  if (!await isRealEmailDomain(d.email.split("@")[1])) {
+    return res.status(400).json({ error: "email_undeliverable" });
+  }
   // HTML-escaped copy for interpolation into the notification emails below
   const h = Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v == null ? v : escapeHtml(v)]));
 
@@ -1277,7 +1404,8 @@ app.post("/v1/public/advertiser-inquiry", async (req, res) => {
   }
 
   // Notify admin
-  if (resend) {
+  if (resend && canSendEmail()) {
+    bumpCounter("email_sent");
     resend.emails.send({
       from: "DevCut <techsupport@devcut.co.in>",
       to: "er.gouravgujariya@gmail.com",
@@ -1299,7 +1427,10 @@ app.post("/v1/public/advertiser-inquiry", async (req, res) => {
       </div>`,
     }).catch(err => console.error("[advertiser-inquiry] resend error:", err.message));
 
-    // Confirmation to advertiser
+    // Confirmation to advertiser. This one goes to an attacker-supplied address,
+    // so it is the send that risks the sending domain's reputation — count it too,
+    // otherwise the daily cap under-counts this route by half.
+    bumpCounter("email_sent");
     resend.emails.send({
       from: "DevCut <techsupport@devcut.co.in>",
       to: d.email,
@@ -1454,6 +1585,25 @@ app.get("/api/overview", (req, res) => {
   ).all();
   const recent = [...recentImpressions, ...recentClicks].sort((a, b) => b.ts - a.ts).slice(0, 10);
 
+  // Download → install → signup → activate → earn. `stuck` is the actionable
+  // end: invites that were emailed days ago and never redeemed.
+  const counterSum = (prefix) => db.prepare(
+    "SELECT COALESCE(SUM(n), 0) AS n FROM counters WHERE name LIKE ?"
+  ).get(prefix + ":%").n;
+  const funnel = {
+    downloads: counterSum("vsix_download"),
+    ext_pings: counterSum("ext_ping_anon"),
+    signups:   db.prepare("SELECT COUNT(*) AS n FROM beta_invites").get().n,
+    activated: db.prepare("SELECT COUNT(*) AS n FROM beta_invites WHERE used_at IS NOT NULL").get().n,
+    earning:   uniqueUsers,
+    stuck: db.prepare(
+      `SELECT email, company, created_at, (unixepoch() - created_at) / 86400 AS days
+       FROM beta_invites
+       WHERE used_at IS NULL AND created_at < unixepoch() - 3 * 86400
+       ORDER BY created_at DESC LIMIT 50`
+    ).all(),
+  };
+
   res.json({
     totalImpressions, totalClicks, uniqueUsers, activeSponsors, totalUsers,
     totalPaidRupees: (totalPaid / 100).toFixed(2),
@@ -1461,7 +1611,35 @@ app.get("/api/overview", (req, res) => {
     taskTypeBreakdown,
     activeDevsToday: activeDevs,
     recent,
+    funnel,
   });
+});
+
+// Abuse signals for manual review — flag only, never auto-ban. Admins act via
+// PUT /api/users/:id/status.
+app.get("/api/flags", (req, res) => {
+  const shared_ips = db.prepare(
+    `SELECT ip, COUNT(DISTINCT user_id) AS user_count, group_concat(DISTINCT user_id) AS ids
+     FROM impressions WHERE ip IS NOT NULL
+     GROUP BY ip HAVING COUNT(DISTINCT user_id) > 3
+     ORDER BY user_count DESC`
+  ).all().map(r => ({ ip: r.ip, user_count: r.user_count, user_ids: r.ids.split(",") }));
+
+  const signup_bursts = db.prepare(
+    `SELECT ip, COUNT(*) AS count FROM beta_invites WHERE ip IS NOT NULL
+     GROUP BY ip HAVING COUNT(*) > 3 ORDER BY count DESC`
+  ).all();
+
+  // Derived from impressions, the same table rateLimitImpressions counts against
+  // the 500/day cap (both bucket by UTC day), so no extra column is needed.
+  const cap_hitters = db.prepare(
+    `SELECT user_id, COUNT(*) AS days_at_cap FROM (
+       SELECT user_id FROM impressions
+       GROUP BY user_id, date(ts, 'unixepoch') HAVING COUNT(*) >= 500
+     ) GROUP BY user_id HAVING days_at_cap >= 2 ORDER BY days_at_cap DESC`
+  ).all();
+
+  res.json({ shared_ips, signup_bursts, cap_hitters });
 });
 
 // Admin: manage invites
@@ -1533,9 +1711,12 @@ app.get("/api/withdrawals", (req, res) => {
 app.put("/api/withdrawals/:id", (req, res) => {
   const { status, ref } = req.body;
   if (!["completed", "rejected"].includes(status)) return res.status(400).json({ error: "status must be completed or rejected" });
-  db.prepare(
-    "UPDATE withdrawals SET status=?, ref=?, resolved_at=unixepoch() WHERE id=?"
+  const info = db.prepare(
+    "UPDATE withdrawals SET status=?, ref=?, resolved_at=unixepoch() WHERE id=? AND status='pending'"
   ).run(status, ref || null, req.params.id);
+  // Resolved rows are final. Without the status guard, flipping completed ->
+  // rejected returns already-paid money to the user's withdrawable balance.
+  if (info.changes === 0) return res.status(409).json({ error: "already_resolved" });
   res.json({ ok: true });
 });
 

@@ -14,10 +14,13 @@ server/
 landing/
 docs/
 
-# Dev files
+# Dev files — DIRECTORY rules. A bare *.md/*.json denylist cannot reach a nested
+# file (vsce globs don't cross "/"), so agent/skill tooling must be excluded by
+# directory or all 102 of its files ship. .gitignore learned this; this file didn't.
 .vscode/
 .github/
 .claude/
+.agents/
 graphify-out/
 scripts/
 !scripts/uninstall.js
@@ -36,12 +39,18 @@ competition.ini
 *.json
 !package.json
 
-# Images (not used in extension UI — except logo.png)
-!logo.png
+# Images (not used in extension UI — except logo.png). Patterns first, then the
+# negation: vsce lets negations win regardless of order, but written this way it
+# also reads correctly to anyone who assumes .gitignore precedence.
 *.png
 *.jpg
 *.jpeg
+*.svg
+!logo.png
 gen_logo.py
+
+# Dev tests — not product code
+test-*.js
 
 # Build artifacts — needs **/ because vsce globs don't cross directory boundaries
 **/*.js.map
