@@ -5,7 +5,10 @@ const dns = require("node:dns").promises;
 const { z } = require("zod");
 const db = require("./db");
 const { signImpressionToken, verifyImpressionToken } = require("./auth");
-const { requireAuth, adminAuth, rateLimitImpressions, globalRateLimit, authRateLimit, oauthRateLimit } = require("./middleware");
+const {
+  requireAuth, adminAuth, rateLimitImpressions, rateLimitSponsorLine,
+  globalRateLimit, authRateLimit, oauthRateLimit, DWELL_WINDOW_MS,
+} = require("./middleware");
 const { Resend } = require("resend");
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
@@ -703,10 +706,14 @@ app.post("/v1/me/profile", requireAuth, (req, res) => {
 });
 
 // GET /v1/me/analytics  — per-user earnings breakdown for the web dashboard
+// Every query below filters `billable = 1`. A row exists from the moment its line
+// is minted (state `reserved`), but it is not money until POST /v1/impressions
+// says the ad rendered — counting reservations here would show a dev earnings for
+// lines they never saw, and would move on nothing but a rotation timer.
 app.get("/v1/me/analytics", requireAuth, (req, res) => {
   const totals = db.prepare(
     `SELECT COALESCE(SUM(payout_paise), 0) AS total_paise, COUNT(*) AS impression_count, MIN(ts) AS first_ts
-     FROM impressions WHERE user_id = ?`
+     FROM impressions WHERE user_id = ? AND billable = 1`
   ).get(req.userId);
   const clickCount = db.prepare("SELECT COUNT(*) AS n FROM clicks WHERE user_id = ?").get(req.userId).n;
   const withdrawn = db.prepare(
@@ -719,13 +726,13 @@ app.get("/v1/me/analytics", requireAuth, (req, res) => {
             COALESCE(SUM(payout_paise), 0) AS paise,
             COUNT(*) AS impressions
      FROM impressions
-     WHERE user_id = ? AND ts > unixepoch() - 30 * 86400
+     WHERE user_id = ? AND billable = 1 AND ts > unixepoch() - 30 * 86400
      GROUP BY day ORDER BY day`
   ).all(req.userId);
 
   const byTaskType = db.prepare(
     `SELECT task_type, COUNT(*) AS n, COALESCE(SUM(payout_paise), 0) AS paise
-     FROM impressions WHERE user_id = ? AND task_type IS NOT NULL
+     FROM impressions WHERE user_id = ? AND billable = 1 AND task_type IS NOT NULL
      GROUP BY task_type ORDER BY n DESC`
   ).all(req.userId);
 
@@ -733,14 +740,14 @@ app.get("/v1/me/analytics", requireAuth, (req, res) => {
     `SELECT i.sponsor_id, COALESCE(s.name, i.sponsor_id) AS name,
             COUNT(*) AS n, COALESCE(SUM(i.payout_paise), 0) AS paise
      FROM impressions i LEFT JOIN sponsors s ON s.id = i.sponsor_id
-     WHERE i.user_id = ? GROUP BY i.sponsor_id ORDER BY paise DESC`
+     WHERE i.user_id = ? AND i.billable = 1 GROUP BY i.sponsor_id ORDER BY paise DESC`
   ).all(req.userId);
 
   // Rank among earning devs; a dev with nothing yet counts as one extra entrant
-  const earners = db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM impressions").get().n;
+  const earners = db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM impressions WHERE billable = 1").get().n;
   const ahead = db.prepare(
     `SELECT COUNT(*) AS n FROM (
-       SELECT user_id FROM impressions GROUP BY user_id HAVING SUM(payout_paise) > ?
+       SELECT user_id FROM impressions WHERE billable = 1 GROUP BY user_id HAVING SUM(payout_paise) > ?
      )`
   ).get(totals.total_paise).n;
 
@@ -774,12 +781,21 @@ function prefer(pool, fn) {
 const SPONSOR_DEFAULT_DAILY_PAISE = Number(process.env.SPONSOR_DEFAULT_DAILY_PAISE || 100000); // Rs 1000/day
 const effectiveDailyBudget = (s) => s.budget_paise_daily ?? SPONSOR_DEFAULT_DAILY_PAISE;
 
+// Rollback signal for the reservation transaction below — a sentinel rather than a
+// return value because only a throw rolls a better-sqlite3 transaction back.
+const NO_BUDGET = new Error("sponsor budget exhausted between filter and reserve");
+
 // Per-sponsor spend in one GROUP BY (bid-denominated — budgets cap what advertisers pay,
 // not what devs are paid), instead of a query per sponsor.
+//
+// Counts every state except `void`: a `reserved` row is inventory already promised
+// to a user and redeemable for the next 90s, so it holds budget from the moment it
+// is minted. Excluding it would let a burst of mints oversell a campaign's cap by
+// however many tokens are in flight. `void` is the one state that releases the hold.
 function spendBySponsor(todayOnly) {
   return db.prepare(
     `SELECT sponsor_id, COALESCE(SUM(bid_paise), 0) AS spend FROM impressions
-     ${todayOnly ? "WHERE ts > unixepoch('now', 'start of day')" : ""}
+     WHERE state != 'void' ${todayOnly ? "AND ts > unixepoch('now', 'start of day')" : ""}
      GROUP BY sponsor_id`
   ).all().reduce((m, r) => (m[r.sponsor_id] = r.spend, m), {});
 }
@@ -788,7 +804,7 @@ function spendBySponsor(todayOnly) {
 const KNOWN_TASK_TYPES = new Set(["claude", "aider", "cursor", "npm", "yarn", "pnpm", "npx", "pip", "python", "docker", "k8s", "terraform", "gradle", "maven", "rust", "go", "make", "cmake", "git", "ruby", "php"]);
 
 // GET /v1/sponsor-line  — fetch current ad using highest-bidder auction (authenticated)
-app.get("/v1/sponsor-line", requireAuth, (req, res) => {
+app.get("/v1/sponsor-line", requireAuth, rateLimitSponsorLine, (req, res) => {
   const taskType = KNOWN_TASK_TYPES.has(req.query.taskType) ? req.query.taskType : null;
   const idle = req.query.idle === "1" || req.query.idle === "true";
 
@@ -842,11 +858,54 @@ app.get("/v1/sponsor-line", requireAuth, (req, res) => {
   // Idle slots pay half. The impression token pins the served payout + bid, so what
   // /v1/impressions credits always matches what the user was shown.
   const payoutPaise = idle ? Math.round(sponsor.payout_paise * IDLE_PAYOUT_MULT) : sponsor.payout_paise;
+
+  // The mint is where the impression row is born, in state `reserved`: it holds
+  // the advertiser's budget but pays the dev nothing (billable = 0) until
+  // POST /v1/impressions proves the line actually rendered.
+  //
+  // The eligibility filter above read spend outside any transaction, so re-check
+  // the winner's budget in here — concurrent mints land between the two.
+  const jti = randomUUID();
+  const reserve = db.transaction(() => {
+    // SINGLE OUTSTANDING RESERVATION per user, and the void comes FIRST. Re-rolling
+    // the auction now *moves* your one reservation instead of dealing you another
+    // redeemable option, which is what killed the "re-roll until the top payer comes
+    // up, redeem only that one" farm (see DAILY_EARNINGS_PAISE_CAP in
+    // server/middleware.js). Releasing the old hold before the budget check also
+    // stops a re-roll being blocked by its own predecessor's 42p — the two lines
+    // never coexist, so they must never both count against the cap.
+    db.prepare("UPDATE impressions SET state = 'void' WHERE user_id = ? AND state = 'reserved'").run(req.userId);
+
+    const spend = db.prepare(
+      `SELECT COALESCE(SUM(bid_paise), 0) AS total,
+              COALESCE(SUM(CASE WHEN ts > unixepoch('now', 'start of day') THEN bid_paise END), 0) AS today
+       FROM impressions WHERE sponsor_id = ? AND state != 'void'`
+    ).get(sponsor.id);
+    // Throw, don't return: this rolls the void back, so a user who cannot be given
+    // a new line keeps the one they already hold.
+    if (spend.today + sponsor.bid_paise > effectiveDailyBudget(sponsor)) throw NO_BUDGET;
+    if (sponsor.budget_paise_total != null && spend.total + sponsor.bid_paise > sponsor.budget_paise_total) throw NO_BUDGET;
+
+    db.prepare(
+      `INSERT INTO impressions (user_id, sponsor_id, task_type, ip, payout_paise, bid_paise, jti, state, billable)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'reserved', 0)`
+    ).run(req.userId, sponsor.id, taskType, req.ip || req.headers["x-forwarded-for"] || null,
+          payoutPaise, sponsor.bid_paise, jti);
+  });
+  try {
+    reserve();
+  } catch (e) {
+    if (e !== NO_BUDGET) throw e;
+    // Lost the budget between the eligibility filter (read outside the transaction)
+    // and the reserve — same contract as "nothing eligible", which clients handle.
+    return res.json(null);
+  }
+
   const impressionToken = signImpressionToken({
-    sponsorId: sponsor.id, userId: req.userId, payoutPaise, bidPaise: sponsor.bid_paise,
+    sponsorId: sponsor.id, userId: req.userId, payoutPaise, bidPaise: sponsor.bid_paise, jti,
   });
 
-  console.log(`[sponsor-line] served "${sponsor.id}" (bid=${sponsor.bid_paise}p payout=${payoutPaise}p) to ${req.userId} task_type=${taskType} idle=${idle}`);
+  console.log(`[sponsor-line] reserved "${sponsor.id}" (bid=${sponsor.bid_paise}p payout=${payoutPaise}p) to ${req.userId} task_type=${taskType} idle=${idle}`);
   res.json({
     id: sponsor.id,
     text: sponsor.text,
@@ -858,7 +917,17 @@ app.get("/v1/sponsor-line", requireAuth, (req, res) => {
   });
 });
 
-// POST /v1/impressions — credit an impression using the signed token from /v1/sponsor-line
+// POST /v1/impressions — reserved -> rendered.
+//
+// Deliberately still the same endpoint with the same request and response: ~9
+// .vsix builds are already in the wild calling it, and they must keep earning
+// with no client change. What moved is the meaning — the row was already created
+// at mint time, so this is the promotion that says "the line was actually put on
+// screen", and the promotion is what makes it billable.
+//
+// Crediting at `rendered` rather than at display time (as the old insert-here
+// design did) preserves today's economics almost exactly: the same client call,
+// a few milliseconds later in the same request.
 app.post("/v1/impressions", requireAuth, rateLimitImpressions, (req, res) => {
   const parse = z.object({
     token: z.string(),
@@ -877,40 +946,97 @@ app.post("/v1/impressions", requireAuth, rateLimitImpressions, (req, res) => {
   const sponsor = db.prepare("SELECT * FROM sponsors WHERE id = ? AND active = 1").get(claims.spn);
   if (!sponsor) return res.status(400).json({ error: "unknown_sponsor" });
 
-  const ip = req.ip || req.headers["x-forwarded-for"] || null;
-  try {
-    // Budget re-check + insert are atomic — the serve-time eligibility check can race
-    const exhausted = db.transaction(() => {
-      // Replayed token → 409 even when the budget is also gone (unique index is the race backstop)
-      if (db.prepare("SELECT 1 FROM impressions WHERE jti = ?").get(claims.jti)) {
-        const err = new Error("duplicate jti");
-        err.code = "SQLITE_CONSTRAINT_UNIQUE";
-        throw err;
-      }
-      const today = db.prepare(
-        `SELECT COALESCE(SUM(bid_paise), 0) AS spend FROM impressions
-         WHERE sponsor_id = ? AND ts > unixepoch('now', 'start of day')`
-      ).get(sponsor.id).spend;
-      const total = db.prepare(
-        "SELECT COALESCE(SUM(bid_paise), 0) AS spend FROM impressions WHERE sponsor_id = ?"
-      ).get(sponsor.id).spend;
-      if ((today + claims.bid > effectiveDailyBudget(sponsor)) ||
-          (sponsor.budget_paise_total != null && total + claims.bid > sponsor.budget_paise_total)) {
-        return true;
-      }
-      db.prepare("INSERT INTO impressions (user_id, sponsor_id, task_type, ip, payout_paise, bid_paise, jti) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(req.userId, sponsor.id, parse.data.taskType || null, ip, claims.pay, claims.bid, claims.jti);
-      return false;
-    })();
-    if (exhausted) return res.status(410).json({ error: "budget_exhausted" });
-  } catch (e) {
-    // Unique jti index — the same token can only ever credit once
-    if (e.code === "SQLITE_CONSTRAINT_UNIQUE") return res.status(409).json({ error: "duplicate_impression" });
-    throw e;
-  }
+  // Read-then-promote runs in one transaction. better-sqlite3 is synchronous, so
+  // the state check and the UPDATE cannot interleave with another request — the
+  // state check IS the replay guard now that the row already exists and the
+  // unique jti index no longer fires on a second POST. (The index stays as the
+  // backstop for anything that inserts impressions outside this path.)
+  const refused = db.transaction(() => {
+    const row = db.prepare("SELECT id, state, bid_paise FROM impressions WHERE jti = ?").get(claims.jti);
+    if (!row) return { status: 404, error: "unknown_reservation" };
+    if (row.state === "void") return { status: 409, error: "reservation_void" };
+    // Keep this error string: clients in the wild branch on it.
+    if (row.state !== "reserved") return { status: 409, error: "duplicate_impression" };
 
-  console.log(`[impression] user=${req.userId} sponsor=${sponsor.id} type=${parse.data.taskType}`);
+    // Budget re-check at render time. Spend already includes this reservation, so
+    // it is compared as-is rather than adding claims.bid on top — the hold was
+    // taken at mint. This still catches the campaign being re-priced or oversold
+    // while the token was in flight.
+    const spend = db.prepare(
+      `SELECT COALESCE(SUM(bid_paise), 0) AS total,
+              COALESCE(SUM(CASE WHEN ts > unixepoch('now', 'start of day') THEN bid_paise END), 0) AS today
+       FROM impressions WHERE sponsor_id = ? AND state != 'void'`
+    ).get(sponsor.id);
+    if (spend.today > effectiveDailyBudget(sponsor) ||
+        (sponsor.budget_paise_total != null && spend.total > sponsor.budget_paise_total)) {
+      // Unredeemable from here on — void it so the advertiser gets the hold back
+      // now instead of at TTL, and the next mint is not blocked by dead spend.
+      db.prepare("UPDATE impressions SET state = 'void' WHERE id = ?").run(row.id);
+      return { status: 410, error: "budget_exhausted" };
+    }
+
+    // task_type arrives twice (query param at mint, body here); COALESCE keeps
+    // whichever one the client actually sent.
+    db.prepare(
+      `UPDATE impressions SET state = 'rendered', rendered_at = unixepoch(), billable = 1,
+                              task_type = COALESCE(?, task_type)
+       WHERE id = ? AND state = 'reserved'`
+    ).run(parse.data.taskType || null, row.id);
+    return null;
+  })();
+  if (refused) return res.status(refused.status).json({ error: refused.error });
+
+  console.log(`[impression] rendered user=${req.userId} sponsor=${sponsor.id} type=${parse.data.taskType}`);
   res.json({ ok: true });
+});
+
+// POST /v1/impressions/dwell — how long the rendered line was actually on screen.
+//
+// THE SECURITY PROPERTY: the client may lie about dwell, but it can never lie
+// about wall-clock. Whatever it reports is clamped to the time that has really
+// elapsed since the server stamped rendered_at, so "I looked at it for an hour"
+// collapses to however long the reservation has existed. DWELL_WINDOW_MS caps the
+// other end — a build can run for hours, but nobody watches a status bar for one.
+//
+// Stored as max(existing, clamped): dwell only ever increases, so an honest client
+// can report progressively and a dishonest one cannot walk a number back down
+// after the fact.
+//
+// This does NOT promote to `viewable`. Deciding what counts as seen is the
+// settlement sweeper's job (see VIEWABILITY_MS in server/middleware.js).
+app.post("/v1/impressions/dwell", requireAuth, (req, res) => {
+  const parse = z.object({
+    token: z.string(),
+    // Not .min(0): out-of-range values are clamped, not rejected — a client
+    // whose clock jumped backwards should still be able to report the rest.
+    visibleMs: z.number().finite(),
+    focusedMs: z.number().finite(),
+  }).safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: "invalid body" });
+
+  let claims;
+  try {
+    claims = verifyImpressionToken(parse.data.token);
+  } catch (_) {
+    return res.status(400).json({ error: "invalid_impression_token" });
+  }
+  if (claims.sub !== req.userId) return res.status(403).json({ error: "token_user_mismatch" });
+
+  const row = db.prepare("SELECT id, state, rendered_at, visible_ms, focused_ms FROM impressions WHERE jti = ?").get(claims.jti);
+  if (!row) return res.status(404).json({ error: "unknown_reservation" });
+  if (row.state === "void") return res.status(409).json({ error: "reservation_void" });
+
+  // rendered_at is unixepoch seconds like every other timestamp here, so the
+  // wall-clock ceiling rounds down to the second. Rounding down is the safe
+  // direction: it can only ever credit less dwell than really elapsed. A row that
+  // is still `reserved` has no rendered_at, so its ceiling is 0.
+  const elapsedMs = row.rendered_at ? (Math.floor(Date.now() / 1000) - row.rendered_at) * 1000 : 0;
+  const clamp = (ms) => Math.max(0, Math.min(Math.floor(ms), elapsedMs, DWELL_WINDOW_MS));
+  const visibleMs = Math.max(row.visible_ms, clamp(parse.data.visibleMs));
+  const focusedMs = Math.max(row.focused_ms, clamp(parse.data.focusedMs));
+
+  db.prepare("UPDATE impressions SET visible_ms = ?, focused_ms = ? WHERE id = ?").run(visibleMs, focusedMs, row.id);
+  res.json({ ok: true, visibleMs, focusedMs });
 });
 
 // POST /v1/clicks
@@ -931,7 +1057,7 @@ app.post("/v1/clicks", requireAuth, (req, res) => {
   const lineId = parse.data.lineId;
 
   const served = db.prepare(
-    "SELECT 1 FROM impressions WHERE user_id = ? AND sponsor_id = ? AND ts > unixepoch() - ?"
+    "SELECT 1 FROM impressions WHERE user_id = ? AND sponsor_id = ? AND state != 'void' AND ts > unixepoch() - ?"
   ).get(req.userId, lineId, CLICK_IMPRESSION_WINDOW);
   if (!served) return res.status(400).json({ error: "no_matching_impression" });
 
@@ -949,7 +1075,7 @@ app.post("/v1/clicks", requireAuth, (req, res) => {
 app.get("/v1/earnings", requireAuth, (req, res) => {
   const row = db.prepare(
     `SELECT COALESCE(SUM(payout_paise), 0) AS total_paise, COUNT(*) AS impression_count
-     FROM impressions WHERE user_id = ?`
+     FROM impressions WHERE user_id = ? AND billable = 1`
   ).get(req.userId);
   const withdrawn = db.prepare(
     `SELECT COALESCE(SUM(amount_paise), 0) AS total_paise
@@ -970,7 +1096,7 @@ app.get("/v1/earnings", requireAuth, (req, res) => {
 
 // GET /v1/stats  — quick sanity check (unauthenticated, aggregate only)
 app.get("/v1/stats", (req, res) => {
-  const impressions = db.prepare("SELECT COUNT(*) as n FROM impressions").get().n;
+  const impressions = db.prepare("SELECT COUNT(*) as n FROM impressions WHERE billable = 1").get().n;
   const clicks = db.prepare("SELECT COUNT(*) as n FROM clicks").get().n;
   res.json({ impressions, clicks });
 });
@@ -999,7 +1125,7 @@ app.post("/v1/withdraw", requireAuth, (req, res) => {
   try {
     out = db.transaction(() => {
       const earned = db.prepare(
-        "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions WHERE user_id = ?"
+        "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions WHERE user_id = ? AND billable = 1"
       ).get(req.userId).total_paise;
       const withdrawn = db.prepare(
         `SELECT COALESCE(SUM(amount_paise), 0) AS total_paise
@@ -1124,7 +1250,7 @@ app.get("/v1/teams/me", requireAuth, (req, res) => {
             COALESCE(SUM(i.payout_paise), 0) AS total_paise,
             COUNT(i.id)                        AS impression_count
      FROM   team_members tm
-     LEFT JOIN impressions i ON i.user_id = tm.user_id
+     LEFT JOIN impressions i ON i.user_id = tm.user_id AND i.billable = 1
      WHERE  tm.team_id = ?
      GROUP  BY tm.user_id
      ORDER  BY total_paise DESC`
@@ -1149,18 +1275,20 @@ app.get("/v1/teams/me", requireAuth, (req, res) => {
 // it must invalidate on withdrawal-status changes or public stats go stale (there is
 // a test asserting exactly that). Add it, with invalidation, before impressions pass ~100k.
 app.get("/v1/public/stats", (req, res) => {
-  const totalImpressions = db.prepare("SELECT COUNT(*) as n FROM impressions").get().n;
+  // billable = 1 throughout: an impression is public-stats-worthy once it has
+  // rendered, not when its line was reserved (see db.js and /v1/me/analytics).
+  const totalImpressions = db.prepare("SELECT COUNT(*) as n FROM impressions WHERE billable = 1").get().n;
   // Accrued earnings (what devs have racked up) — used for the per-dev average
   // and the 7-day pace below, not for "paid out" (that's actual withdrawals).
   const totalEarned = db.prepare(
-    "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions"
+    "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions WHERE billable = 1"
   ).get().total_paise;
   // Money that has actually left the building — completed withdrawals only.
   const totalPaidOut = db.prepare(
     "SELECT COALESCE(SUM(amount_paise), 0) AS paise FROM withdrawals WHERE status = 'completed'"
   ).get().paise;
   const activeDevs = db.prepare(
-    "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE ts > unixepoch() - 86400"
+    "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE billable = 1 AND ts > unixepoch() - 86400"
   ).get().n;
   // Money owed but not yet sent — shown alongside totalPaidOut so "our books" includes
   // what's in flight, not just what's already settled.
@@ -1171,17 +1299,17 @@ app.get("/v1/public/stats", (req, res) => {
   const totalSignups = db.prepare("SELECT COUNT(*) as n FROM beta_invites").get().n;
   const topTaskTypes = db.prepare(
     `SELECT task_type, COUNT(*) as n FROM impressions
-     WHERE task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC LIMIT 5`
+     WHERE billable = 1 AND task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC LIMIT 5`
   ).all();
   const totalClicks = db.prepare("SELECT COUNT(*) as n FROM clicks").get().n;
   const paidLast7d = db.prepare(
-    "SELECT COALESCE(SUM(payout_paise), 0) AS paise FROM impressions WHERE ts > unixepoch() - 7 * 86400"
+    "SELECT COALESCE(SUM(payout_paise), 0) AS paise FROM impressions WHERE billable = 1 AND ts > unixepoch() - 7 * 86400"
   ).get().paise;
   // "Active dev" here = any dev who has ever earned, so the average doesn't swing on a quiet day
-  const earningDevs = db.prepare("SELECT COUNT(DISTINCT user_id) as n FROM impressions").get().n;
+  const earningDevs = db.prepare("SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE billable = 1").get().n;
   const dailyImpressions = db.prepare(
     `SELECT date(ts, 'unixepoch') AS day, COUNT(*) AS n FROM impressions
-     WHERE ts > unixepoch() - 14 * 86400 GROUP BY day ORDER BY day`
+     WHERE billable = 1 AND ts > unixepoch() - 14 * 86400 GROUP BY day ORDER BY day`
   ).all();
 
   res.json({
@@ -1470,7 +1598,7 @@ app.use("/api", adminAuth);
 
 app.get("/api/sponsors", (req, res) => {
   const sponsors = db.prepare("SELECT * FROM sponsors ORDER BY created_at DESC").all();
-  const impressionCounts = db.prepare("SELECT sponsor_id, COUNT(*) as n FROM impressions GROUP BY sponsor_id")
+  const impressionCounts = db.prepare("SELECT sponsor_id, COUNT(*) as n FROM impressions WHERE billable = 1 GROUP BY sponsor_id")
     .all().reduce((acc, r) => { acc[r.sponsor_id] = r.n; return acc; }, {});
   const clickCounts = db.prepare("SELECT sponsor_id, COUNT(*) as n FROM clicks GROUP BY sponsor_id")
     .all().reduce((acc, r) => { acc[r.sponsor_id] = r.n; return acc; }, {});
@@ -1567,9 +1695,9 @@ app.delete("/api/sponsors/:id", (req, res) => {
 });
 
 app.get("/api/overview", (req, res) => {
-  const totalImpressions = db.prepare("SELECT COUNT(*) as n FROM impressions").get().n;
+  const totalImpressions = db.prepare("SELECT COUNT(*) as n FROM impressions WHERE billable = 1").get().n;
   const totalClicks = db.prepare("SELECT COUNT(*) as n FROM clicks").get().n;
-  const uniqueUsers = db.prepare("SELECT COUNT(DISTINCT user_id) as n FROM impressions").get().n;
+  const uniqueUsers = db.prepare("SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE billable = 1").get().n;
   const activeSponsors = db.prepare("SELECT COUNT(*) as n FROM sponsors WHERE active=1").get().n;
   const totalUsers = db.prepare("SELECT COUNT(*) as n FROM users").get().n;
   const pendingWithdrawals = db.prepare("SELECT COUNT(*) as n, COALESCE(SUM(amount_paise),0) as total FROM withdrawals WHERE status='pending'").get();
@@ -1578,15 +1706,15 @@ app.get("/api/overview", (req, res) => {
     "SELECT COALESCE(SUM(amount_paise), 0) AS paise FROM withdrawals WHERE status = 'completed'"
   ).get().paise;
   const taskTypeBreakdown = db.prepare(
-    "SELECT task_type, COUNT(*) as n FROM impressions WHERE task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC"
+    "SELECT task_type, COUNT(*) as n FROM impressions WHERE billable = 1 AND task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC"
   ).all();
 
   const activeDevs = db.prepare(
-    "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE ts > unixepoch() - 86400"
+    "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE billable = 1 AND ts > unixepoch() - 86400"
   ).get().n;
 
   const recentImpressions = db.prepare(
-    "SELECT 'impression' as type, user_id, sponsor_id, ts FROM impressions ORDER BY ts DESC LIMIT 5"
+    "SELECT 'impression' as type, user_id, sponsor_id, ts FROM impressions WHERE billable = 1 ORDER BY ts DESC LIMIT 5"
   ).all();
   const recentClicks = db.prepare(
     "SELECT 'click' as type, user_id, sponsor_id, ts FROM clicks ORDER BY ts DESC LIMIT 5"
@@ -1638,7 +1766,7 @@ app.get("/api/overview", (req, res) => {
 app.get("/api/flags", (req, res) => {
   const shared_ips = db.prepare(
     `SELECT ip, COUNT(DISTINCT user_id) AS user_count, group_concat(DISTINCT user_id) AS ids
-     FROM impressions WHERE ip IS NOT NULL
+     FROM impressions WHERE billable = 1 AND ip IS NOT NULL
      GROUP BY ip HAVING COUNT(DISTINCT user_id) > 3
      ORDER BY user_count DESC`
   ).all().map(r => ({ ip: r.ip, user_count: r.user_count, user_ids: r.ids.split(",") }));
@@ -1649,10 +1777,11 @@ app.get("/api/flags", (req, res) => {
   ).all();
 
   // Derived from impressions, the same table rateLimitImpressions counts against
-  // the 500/day cap (both bucket by UTC day), so no extra column is needed.
+  // the 500/day cap (both bucket by UTC day, both skip void rows), so no extra
+  // column is needed.
   const cap_hitters = db.prepare(
     `SELECT user_id, COUNT(*) AS days_at_cap FROM (
-       SELECT user_id FROM impressions
+       SELECT user_id FROM impressions WHERE state != 'void'
        GROUP BY user_id, date(ts, 'unixepoch') HAVING COUNT(*) >= 500
      ) GROUP BY user_id HAVING days_at_cap >= 2 ORDER BY days_at_cap DESC`
   ).all();
@@ -1754,7 +1883,7 @@ app.get("/api/users", (req, res) => {
             COALESCE(SUM(i.payout_paise), 0) AS total_earned_paise,
             COUNT(i.id) AS impression_count
      FROM users u
-     LEFT JOIN impressions i ON i.user_id = u.id
+     LEFT JOIN impressions i ON i.user_id = u.id AND i.billable = 1
      GROUP BY u.id ORDER BY total_earned_paise DESC`
   ).all();
   res.json(users);

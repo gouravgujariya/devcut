@@ -144,19 +144,58 @@ try { db.exec("ALTER TABLE users ADD COLUMN profile_done_at INTEGER"); } catch (
 // extension onboarding survey for users who registered before this existed.
 try { db.exec("ALTER TABLE users ADD COLUMN company TEXT"); } catch (_) {}
 
-// Store payout_paise per impression so earnings survive sponsor deletion
-try { db.exec("ALTER TABLE impressions ADD COLUMN payout_paise INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
-// Backfill existing impressions that still have a live sponsor row
-db.exec(`UPDATE impressions SET payout_paise = (
-  SELECT COALESCE(s.payout_paise, 0) FROM sponsors s WHERE s.id = impressions.sponsor_id
-) WHERE payout_paise = 0 AND sponsor_id IN (SELECT id FROM sponsors)`);
+// Store payout_paise / bid_paise per impression so earnings survive sponsor deletion.
+//
+// The backfill runs INSIDE the try, so it only executes on the one boot that
+// actually adds the column. It used to run unconditionally on every startup,
+// which quietly re-priced history: `WHERE payout_paise = 0` cannot tell "column
+// did not exist yet" from "this impression really was worth 0 paise" (an idle
+// slot rounding to 0, or a sponsor serving at 0), so every redeploy rewrote
+// those rows to the sponsor's *current* price. A user's past earnings are a
+// settled fact — see the migration-safety block in server/test-api.js, which
+// boots db.js a second time against a seeded ledger and fails if a paise moves.
+try {
+  db.exec("ALTER TABLE impressions ADD COLUMN payout_paise INTEGER NOT NULL DEFAULT 0");
+  db.exec(`UPDATE impressions SET payout_paise = (
+    SELECT COALESCE(s.payout_paise, 0) FROM sponsors s WHERE s.id = impressions.sponsor_id
+  ) WHERE sponsor_id IN (SELECT id FROM sponsors)`);
+} catch (_) { /* column already exists — history is already priced, leave it alone */ }
 
 // Record the bid per impression (budgets are bid-denominated) + single-use token id (jti)
-try { db.exec("ALTER TABLE impressions ADD COLUMN bid_paise INTEGER NOT NULL DEFAULT 0"); } catch (_) {}
+try {
+  db.exec("ALTER TABLE impressions ADD COLUMN bid_paise INTEGER NOT NULL DEFAULT 0");
+  db.exec(`UPDATE impressions SET bid_paise = (
+    SELECT COALESCE(s.bid_paise, 0) FROM sponsors s WHERE s.id = impressions.sponsor_id
+  ) WHERE sponsor_id IN (SELECT id FROM sponsors)`);
+} catch (_) { /* see above */ }
 try { db.exec("ALTER TABLE impressions ADD COLUMN jti TEXT"); } catch (_) {}
-db.exec(`UPDATE impressions SET bid_paise = (
-  SELECT COALESCE(s.bid_paise, 0) FROM sponsors s WHERE s.id = impressions.sponsor_id
-) WHERE bid_paise = 0 AND sponsor_id IN (SELECT id FROM sponsors)`);
+
+// ── Impression lifecycle: reserved -> rendered -> viewable -> settled ────────
+// An impression used to be a single INSERT at credit time, with no evidence the
+// ad was ever on screen. It is now a row created when the line is *minted*
+// (GET /v1/sponsor-line) and promoted as evidence arrives.
+//
+// The column DEFAULTS are the entire backfill: the instant the column exists,
+// every historic row reads as state='settled', billable=1 — already earned,
+// already final — so no UPDATE pass touches money. (An UPDATE here is precisely
+// the bug the migration-safety test in server/test-api.js exists to catch.)
+//
+// billable is what earnings/analytics sum on; state is what the lifecycle moves.
+// They are separate because a row can be non-void and still unearned (reserved
+// holds advertiser budget but pays nobody).
+for (const sql of [
+  "ALTER TABLE impressions ADD COLUMN state       TEXT    NOT NULL DEFAULT 'settled'",
+  "ALTER TABLE impressions ADD COLUMN rendered_at INTEGER",                      // unixepoch seconds, like ts
+  "ALTER TABLE impressions ADD COLUMN visible_ms  INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE impressions ADD COLUMN focused_ms  INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE impressions ADD COLUMN settled_at  INTEGER",
+  "ALTER TABLE impressions ADD COLUMN billable    INTEGER NOT NULL DEFAULT 1",
+]) {
+  try { db.exec(sql); } catch (_) { /* column already exists */ }
+}
+// The sweeper that expires stale reservations (and the budget checks) scan by
+// state within a time window; ts leads because every state is time-bounded.
+db.exec("CREATE INDEX IF NOT EXISTS idx_impressions_state_ts ON impressions(state, ts)");
 
 // 24h withdrawal lock after a UPI change (see POST /v1/withdraw)
 try { db.exec("ALTER TABLE users ADD COLUMN upi_updated_at INTEGER"); } catch (_) {}
