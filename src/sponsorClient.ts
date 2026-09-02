@@ -22,6 +22,10 @@ export interface EarningsSummary {
   availablePaise?: number;
   pendingWithdrawal?: boolean;
   minWithdrawPaise?: number;
+  /** Recorded but not settled yet — counted in totalPaise, not yet withdrawable. */
+  pendingPaise?: number;
+  /** Settled lifetime earnings, before withdrawals. */
+  settledPaise?: number;
 }
 
 export interface WithdrawalRecord {
@@ -129,6 +133,20 @@ export class SponsorClient {
       return !!data;
     } catch {
       return false; // rejected (rate-limited) or unreachable — don't credit locally
+    }
+  }
+
+  /**
+   * How long the line actually sat on screen, and how much of that the window had
+   * focus. Best-effort: the line is already rendered and already reported, so a
+   * failure here costs nothing but a data point. The server clamps both numbers to
+   * wall-clock since the reservation, so over-claiming gains the client nothing.
+   */
+  async reportDwell(token: string, visibleMs: number, focusedMs: number): Promise<void> {
+    try {
+      await this.request("POST", "/v1/impressions/dwell", { token, visibleMs, focusedMs });
+    } catch {
+      // Best-effort fire-and-forget.
     }
   }
 

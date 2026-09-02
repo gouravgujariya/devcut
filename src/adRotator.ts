@@ -1,13 +1,97 @@
 import * as vscode from "vscode";
 import { SponsorClient, SponsorLine } from "./sponsorClient";
 import { EarningsStore } from "./earningsStore";
+import { DwellTracker } from "./dwellTracker";
+
+/**
+ * Impression tokens die at 90s. Render one at 89s and the impression POST loses a
+ * race it did not need to enter, so a buffered line is dropped well before that.
+ */
+const TOKEN_SAFE_MS = 75_000;
+
+/**
+ * Cold/stale buffer retry, backing off 2s → 4s → 8s … → 30s.
+ *
+ * The first retry is deliberately fast, because the common cause is a one-off
+ * Railway cold start and the FIRST line of a build shouldn't be a whole rotation late.
+ * The ceiling exists because the server paces MINTING (MINT_FLOOR_SEC, 25s by default):
+ * a mint that lands server-side but times out on our end leaves us 429-ed for the rest
+ * of that window, and a flat 2s retry would just spend it hammering a door we know is
+ * shut. Backing off past the floor means the retry that finally lands is the first one
+ * that could have.
+ *
+ * ponytail: blind backoff, not a `Retry-After` handshake — fetchCurrentLine() collapses
+ * every failure to `undefined`, so the client cannot currently tell 429 from offline.
+ * Plumb the status through and honour the header if the floor ever becomes dynamic.
+ */
+const RETRY_MIN_MS = 2_000;
+const RETRY_MAX_MS = 30_000;
+
+/**
+ * Holds exactly ONE pre-authorised line so rotate() never awaits the network on the
+ * path to bar.show(). Two sequential 8s-timeout round-trips used to gate the first
+ * render, which meant a 10s `npm install` could finish before its ad appeared.
+ *
+ * Depth is 1 on purpose: GET /v1/sponsor-line reserves budget server-side and only one
+ * reservation may be outstanding per user. Do not raise it — a deeper buffer would
+ * either be rejected or strand held budget.
+ */
+export class LineBuffer {
+  private line?: SponsorLine;
+  private fetchedAt = 0;
+  private inFlight = false;
+
+  constructor(
+    private fetch: () => Promise<SponsorLine | undefined>,
+    private now: () => number = Date.now,
+    private maxAgeMs = TOKEN_SAFE_MS
+  ) {}
+
+  /** Synchronous by contract — the render path must never await. */
+  take(): SponsorLine | undefined {
+    const line = this.line;
+    this.line = undefined;
+    if (!line) return undefined;
+    // Dead-token guard: showing it would render an ad nobody can be billed for.
+    if (this.now() - this.fetchedAt > this.maxAgeMs) return undefined;
+    return line;
+  }
+
+  /** Background refill. At most one fetch in flight — see the depth-1 note above. */
+  refill(): void {
+    if (this.line || this.inFlight) return;
+    this.inFlight = true;
+    this.fetch()
+      .then((line) => {
+        // No token means the server declined (budget, targeting, unfinished profile) —
+        // buffering it would only produce an unbillable render later.
+        if (line?.impressionToken) {
+          this.line = line;
+          this.fetchedAt = this.now();
+        }
+      })
+      .catch(() => undefined)
+      .then(() => {
+        this.inFlight = false;
+      });
+  }
+
+  clear(): void {
+    this.line = undefined;
+  }
+}
 
 export class AdRotator {
   private stopped = false;
   private pendingShowTimer?: NodeJS.Timeout;
   private rotationInterval?: NodeJS.Timeout;
+  private retryTimer?: NodeJS.Timeout;
+  private retryMs = RETRY_MIN_MS;
   private flashTimer?: NodeJS.Timeout;
   private currentLine?: SponsorLine;
+  private dwell?: DwellTracker;
+  private dwellToken?: string;
+  private buffer: LineBuffer;
 
   constructor(
     private bar: vscode.StatusBarItem,
@@ -23,10 +107,14 @@ export class AdRotator {
     // unattributed null. Only ever fires for the idle rotator (always built with
     // taskType undefined) — a build's npm/docker/cargo taskType is never touched.
     if (idle) this.taskType = "idle";
+    this.buffer = new LineBuffer(() => this.client.fetchCurrentLine(this.taskType, this.idle));
   }
 
   start(): void {
     this.store.startSession();
+    // Prefetch NOW, before the anti-flicker wait: minTaskSeconds is dead time that
+    // pays for the fetch, so the first line renders the instant the wait is over.
+    this.buffer.refill();
     // Idle mode already waited out devcut.idleMinutes — no extra anti-flicker delay needed.
     const minMs = this.idle ? 0 : this.config.get<number>("minTaskSeconds", 3) * 1000;
     this.pendingShowTimer = setTimeout(() => this.firstShow(), minMs);
@@ -35,7 +123,12 @@ export class AdRotator {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.pendingShowTimer);
+    clearTimeout(this.retryTimer);
     clearInterval(this.rotationInterval);
+    // Report the last line's dwell too, or every build silently loses its final
+    // (and longest-viewed) impression.
+    this.flushDwell();
+    this.buffer.clear();
     const paise = this.store.getSessionEarningsPaise();
     this.store.endSession();
     // ponytail: idle ads exit silently. stop() fires the instant the user types —
@@ -57,42 +150,74 @@ export class AdRotator {
     return this.currentLine;
   }
 
-  private async firstShow(): Promise<void> {
+  private firstShow(): void {
     if (this.stopped) return;
-    await this.rotate();
+    this.rotate();
     const rotMs = this.idle
       ? this.config.get<number>("idleAdRotationSeconds", 120) * 1000
       : this.config.get<number>("adRotationSeconds", 30) * 1000;
     this.rotationInterval = setInterval(() => this.rotate(), rotMs);
   }
 
-  private async rotate(): Promise<void> {
+  /**
+   * Synchronous by design: buffer -> bar.show() with nothing awaited in between.
+   * The impression POST now REPORTS a render that already happened, so it is fired
+   * after the fact and never gates the pixels.
+   */
+  private rotate(): void {
     if (this.stopped) return;
-    try {
-      const line = await this.client.fetchCurrentLine(this.taskType, this.idle);
-      if (!line || !line.impressionToken || this.stopped) {
-        this.bar.hide();
-        return;
-      }
-      // Paid-display invariant: record the impression BEFORE showing the ad.
-      // A rejected impression (429/budget exhausted/duplicate) pays nothing —
-      // showing it anyway would give the advertiser a free ad and the dev ₹0.
-      const accepted = await this.client.recordImpression(line.impressionToken, this.taskType);
-      if (!accepted || this.stopped) {
-        this.bar.hide();
-        return;
-      }
-      this.currentLine = line;
-      this.bar.text = `$(megaphone) ${line.text}`;
-      this.bar.tooltip = `Sponsored — click to learn more. ${line.advertiser ?? ""}`;
-      this.bar.show();
-      this.store.recordSessionImpression(line.payoutPaise ?? 0);
-      const rupees = (this.store.getSessionEarningsPaise() / 100).toFixed(2);
-      this.sessionBar.text = `$(coin) ₹${rupees} this session`;
-      this.sessionBar.show();
-    } catch {
-      // fail silently — never block the user's task on ad errors
+    clearTimeout(this.retryTimer);
+
+    const line = this.buffer.take();
+    if (!line || !line.impressionToken) {
+      // Cold or stale buffer. Deliberately DO NOT hide: a transient 429 or a Railway
+      // cold start used to blank the status bar mid-build. Keep whatever is up and
+      // try again shortly.
+      this.buffer.refill();
+      this.retryTimer = setTimeout(() => this.rotate(), this.retryMs);
+      this.retryMs = Math.min(this.retryMs * 2, RETRY_MAX_MS);
+      return;
     }
+
+    // A line in hand means the backoff did its job — the next cold buffer starts over
+    // at RETRY_MIN_MS rather than inheriting a ceiling from an outage that is over.
+    this.retryMs = RETRY_MIN_MS;
+
+    this.flushDwell(); // close out the line being replaced
+    this.currentLine = line;
+    this.bar.text = `$(megaphone) ${line.text}`;
+    this.bar.tooltip = `Sponsored — click to learn more. ${line.advertiser ?? ""}`;
+    this.bar.show();
+    this.dwell = new DwellTracker();
+    this.dwellToken = line.impressionToken;
+
+    // Fire-and-forget, and refill only once it has landed: the server allows a single
+    // outstanding reservation, so the next GET must not overtake this POST.
+    void this.client
+      .recordImpression(line.impressionToken, this.taskType)
+      .catch(() => false)
+      .then(() => {
+        if (!this.stopped) this.buffer.refill();
+      });
+
+    // ponytail: EarningsStore stays optimistic — it is a UX cache, not a ledger.
+    // The server's settled balance overwrites it on sync.
+    this.store.recordSessionImpression(line.payoutPaise ?? 0);
+    const rupees = (this.store.getSessionEarningsPaise() / 100).toFixed(2);
+    this.sessionBar.text = `$(coin) ₹${rupees} this session`;
+    this.sessionBar.show();
+  }
+
+  /** Ends the current dwell measurement and ships it. Safe to call with nothing running. */
+  private flushDwell(): void {
+    const tracker = this.dwell;
+    const token = this.dwellToken;
+    this.dwell = undefined;
+    this.dwellToken = undefined;
+    if (!tracker || !token) return;
+    const { visibleMs, focusedMs } = tracker.stop();
+    if (visibleMs <= 0) return;
+    void this.client.reportDwell(token, visibleMs, focusedMs);
   }
 
   private flash(paise: number): void {

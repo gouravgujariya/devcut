@@ -462,6 +462,47 @@
     .flag-group ul { margin: 0; padding-left: 18px; font-size: 12px; color: #cbd5e1; }
     .flag-group li { margin-bottom: 3px; }
 
+    /* ── Viewability report ──
+       The rate is the headline, so it gets a number, a tone AND a bar — a weak
+       sponsor has to be findable by scanning, not by reading every decimal. */
+    .vw-rate { min-width: 118px; }
+    .vw-rate-head { display: flex; align-items: baseline; gap: var(--s2); }
+    .vw-rate-n { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .vw-rate .bar-track { height: 6px; margin-top: 5px; }
+    .vw-rate .bar-fill { transition: none; }
+    .vw-good .vw-rate-n { color: #4ade80; }
+    .vw-good .bar-fill  { background: #4ade80; }
+    .vw-mid  .vw-rate-n { color: #fbbf24; }
+    .vw-mid  .bar-fill  { background: #fbbf24; }
+    .vw-low  .vw-rate-n { color: #f87171; }
+    .vw-low  .bar-fill  { background: #f87171; }
+
+    /* ── Dwell histogram ──
+       Proportional segments per bucket. Everything left of the amber line is
+       inventory that rendered and will never bill — that gap is the whole
+       point of the view, so it is toned red rather than just labelled. */
+    .dwell { min-width: 170px; }
+    .dwell-bar {
+      position: relative;
+      display: flex;
+      height: 16px;
+      background: #0f1117;
+      border: 1px solid var(--line-2);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .dwell-seg { min-width: 0; height: 100%; }
+    .dwell-seg.fail     { background: #7f1d1d; }
+    .dwell-seg.straddle { background: linear-gradient(90deg, #7f1d1d, var(--accent)); }
+    .dwell-seg.pass     { background: linear-gradient(180deg, var(--accent-2), var(--accent)); }
+    .dwell-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: #fbbf24; }
+    .dwell-cap { font-size: 11px; color: var(--faint); margin-top: 4px; font-variant-numeric: tabular-nums; }
+    .dwell-empty { background: repeating-linear-gradient(45deg, #14161f, #14161f 4px, #0f1117 4px, #0f1117 8px); }
+
+    .vw-num { font-variant-numeric: tabular-nums; }
+    .vw-msg { font-size: 12px; min-height: 16px; }
+    .vw-note strong { color: #fbbf24; }
+
     /* ── Responsive (≤900px) ── */
     @media (max-width: 900px) {
       header { padding: var(--s3) var(--s4); }
@@ -493,6 +534,7 @@
 <nav>
   <button class="active" onclick="showPage('overview', this)">Overview</button>
   <button onclick="showPage('sponsors', this)">Manage Ads</button>
+  <button onclick="showPage('viewability', this)">Viewability</button>
   <button id="nav-inquiries" onclick="showPage('inquiries', this)">Advertiser Inquiries</button>
   <button onclick="showPage('invites', this)">Invites</button>
   <button onclick="showPage('users', this)">Users</button>
@@ -642,6 +684,80 @@
         </tbody>
       </table>
     </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       Viewability — how much served inventory actually bills, and the
+       threshold that decides it. Editor sits above the data it is tuned from.
+  ════════════════════════════════════════════════════════════ -->
+  <div id="page-viewability" class="page">
+
+    <div class="chart-section">
+      <div class="section-title">Viewability threshold</div>
+      <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-group" style="margin:0;width:160px">
+          <label>Seconds on screen, focused</label>
+          <input id="vw-threshold" type="number" min="1" max="60" step="0.5" placeholder="5" />
+          <div class="hint">1–60 s. Currently <span id="vw-threshold-current">—</span>.</div>
+        </div>
+        <button class="btn btn-primary" onclick="saveThreshold()">Save threshold</button>
+        <div class="vw-msg" id="vw-threshold-msg"></div>
+      </div>
+      <p class="funnel-note vw-note" style="margin:14px 0 0;line-height:1.6">
+        <strong>Changing this is not retroactive.</strong> It only decides how impressions recorded
+        <em>after</em> the change are judged. Impressions that already settled or were already voided keep the
+        threshold they were judged under: lowering this will <strong>not</strong> bring voided impressions back,
+        and raising it will <strong>not</strong> claw back earnings already credited to developers.
+        History is never re-priced.
+      </p>
+      <p class="funnel-note" style="margin:6px 0 0" id="vw-windows"></p>
+    </div>
+
+    <div class="banner flags" id="vw-mixed-banner" style="display:none">
+      <span class="banner-icon">⚠️</span>
+      <div>
+        <strong>This range spans a threshold change.</strong>
+        Impressions in the last <span id="vw-mixed-days">7</span> days were judged against more than one
+        viewability threshold, so the rates below are <strong>not directly comparable</strong> — not between
+        sponsors and not against earlier numbers. Pick a shorter range that sits entirely after the change
+        before you tune on them.
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="section-title" style="margin:0">Viewability by sponsor</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select class="inline-select" id="vw-days" onchange="loadViewability()">
+          <option value="7">Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+        <button class="refresh-btn" onclick="loadViewability()">↻ refresh</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Sponsor</th>
+            <th>Viewable rate</th>
+            <th>Dwell distribution</th>
+            <th>Served</th>
+            <th>Rendered</th>
+            <th>Viewable</th>
+            <th>Settled</th>
+            <th>Billable</th>
+            <th>Clicks</th>
+            <th>CTR</th>
+            <th>Spend / Budget</th>
+          </tr>
+        </thead>
+        <tbody id="viewability-tbody">
+          <tr><td colspan="11" class="loading-text">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="funnel-note" id="vw-legend" style="margin-top:12px;line-height:1.6"></p>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════
@@ -1081,6 +1197,7 @@
       loaded[name] = true;
       if (name === 'overview') loadOverview();
       if (name === 'sponsors') loadSponsors();
+      if (name === 'viewability') loadViewability();
       if (name === 'inquiries') loadInquiries();
       if (name === 'invites') loadInvites();
       if (name === 'users') loadUsers();
@@ -1256,16 +1373,23 @@
       const res = await apiFetch('/api/flags');
       if (!res.ok) throw new Error('flags ' + res.status);
       const f = await res.json() || {};
-      const ips    = Array.isArray(f.shared_ips)    ? f.shared_ips    : [];
-      const bursts = Array.isArray(f.signup_bursts) ? f.signup_bursts : [];
-      const caps   = Array.isArray(f.cap_hitters)   ? f.cap_hitters   : [];
+      const ips     = Array.isArray(f.shared_ips)       ? f.shared_ips       : [];
+      const bursts  = Array.isArray(f.signup_bursts)    ? f.signup_bursts    : [];
+      const caps    = Array.isArray(f.cap_hitters)      ? f.cap_hitters      : [];
+      const dwells  = Array.isArray(f.dwell_flatline)   ? f.dwell_flatline   : [];
+      const cadence = Array.isArray(f.cadence_flatline) ? f.cadence_flatline : [];
+      const upis    = Array.isArray(f.shared_upi)       ? f.shared_upi       : [];
 
-      if (!ips.length && !bursts.length && !caps.length) { banner.style.display = 'none'; return; }
+      const groups = [ips, bursts, caps, dwells, cadence, upis];
+      if (groups.every(g => !g.length)) { banner.style.display = 'none'; return; }
 
       const parts = [];
-      if (ips.length)    parts.push(`${ips.length} shared IP${ips.length === 1 ? '' : 's'}`);
-      if (bursts.length) parts.push(`${bursts.length} signup burst${bursts.length === 1 ? '' : 's'}`);
-      if (caps.length)   parts.push(`${caps.length} repeat cap hitter${caps.length === 1 ? '' : 's'}`);
+      if (ips.length)     parts.push(`${ips.length} shared IP${ips.length === 1 ? '' : 's'}`);
+      if (bursts.length)  parts.push(`${bursts.length} signup burst${bursts.length === 1 ? '' : 's'}`);
+      if (caps.length)    parts.push(`${caps.length} repeat cap hitter${caps.length === 1 ? '' : 's'}`);
+      if (dwells.length)  parts.push(`${dwells.length} flat dwell${dwells.length === 1 ? '' : 's'}`);
+      if (cadence.length) parts.push(`${cadence.length} flat cadence${cadence.length === 1 ? '' : 's'}`);
+      if (upis.length)    parts.push(`${upis.length} shared payout ID${upis.length === 1 ? '' : 's'}`);
       document.getElementById('flags-banner-summary').textContent = 'Worth a look: ' + parts.join(', ') + '.';
 
       document.getElementById('flags-banner-detail').innerHTML = [
@@ -1276,6 +1400,15 @@
           `<span class="mono">${esc(r.ip)}</span> — ${(Number(r.count) || 0).toLocaleString()} signups`),
         flagGroup('Repeat cap hitters', 'hit the daily impression cap on several days', caps, r =>
           `user <span class="mono">${esc(String(r.user_id || '').slice(-8))}</span> — ${(Number(r.days_at_cap) || 0).toLocaleString()} days at cap`),
+        flagGroup('Flat dwell time', 'ads viewed for the same duration every time — a possible script, not a human glance', dwells, r =>
+          `user <span class="mono">${esc(String(r.user_id || '').slice(-8))}</span> — ${(Number(r.n) || 0).toLocaleString()} views, ` +
+          `${(Number(r.min_ms) || 0)}–${(Number(r.max_ms) || 0)}ms spread (avg ${Math.round(Number(r.avg_ms) || 0)}ms)`),
+        flagGroup('Flat cadence', 'impressions land the same number of seconds apart every time — a possible script, not a build', cadence, r =>
+          `user <span class="mono">${esc(String(r.user_id || '').slice(-8))}</span> — ${(Number(r.n) || 0).toLocaleString()} gaps, ` +
+          `${(Number(r.min_gap_s) || 0)}–${(Number(r.max_gap_s) || 0)}s`),
+        flagGroup('Shared payout ID', 'more than one account withdraws to the same UPI ID', upis, r =>
+          `<span class="mono">${esc(r.upi_id)}</span> — ${(Number(r.user_count) || 0).toLocaleString()} accounts` +
+          userIdHint(r.user_ids)),
       ].join('');
 
       banner.style.display = '';
@@ -1937,6 +2070,217 @@
     } catch(e) {
       alert('Error deleting update: ' + e.message);
     }
+  }
+
+  // ── Viewability & dwell ──────────────────────────────
+  // Keys mirror the server's histogram exactly; bounds are [lo, hi) seconds.
+  const DWELL_BUCKETS = [
+    ['0-2', 0, 2], ['2-5', 2, 5], ['5-8', 5, 8], ['8-15', 8, 15], ['15+', 15, Infinity],
+  ];
+
+  function fmtSecs(ms) {
+    const n = Number(ms);
+    return Number.isFinite(n) ? (n / 1000).toFixed(1) + 's' : '—';
+  }
+  function vwNum(n) { return (Number(n) || 0).toLocaleString(); }
+  // /api/report sends ctr as a 0..1 ratio; the older /api/sponsors sends it
+  // already multiplied out. Convert here rather than guess at read time.
+  function vwCtr(ctr) {
+    const n = Number(ctr);
+    return (ctr == null || !Number.isFinite(n)) ? '—' : (n * 100).toFixed(2) + '%';
+  }
+
+  async function loadViewability() {
+    setLoading('viewability', true);
+    const days = document.getElementById('vw-days').value;
+    try {
+      const [settings, report] = await Promise.all([
+        // Settings are the editor's source of truth; the report carries its own
+        // thresholdMs for the histogram marker, so a settings failure isn't fatal.
+        apiFetch('/api/settings').then(r => r.ok ? r.json() : null).catch(() => null),
+        apiFetch('/api/report?days=' + encodeURIComponent(days)).then(r => r.json()),
+      ]);
+      if (settings) renderSettings(settings);
+      renderViewability(report || {});
+    } catch(e) {
+      console.error('Viewability load error:', e);
+      document.getElementById('viewability-tbody').innerHTML =
+        '<tr><td colspan="11" class="empty"><span class="empty-icon">⚠️</span><strong>Could not load the report</strong>Check the server logs, then refresh.</td></tr>';
+    } finally {
+      setLoading('viewability', false);
+    }
+  }
+
+  function renderSettings(s) {
+    const ms = Number(s.viewabilityMs);
+    document.getElementById('vw-threshold-current').textContent = fmtSecs(ms);
+    if (Number.isFinite(ms)) {
+      document.getElementById('vw-threshold').value = String(+(ms / 1000).toFixed(1));
+    }
+    // The other two windows are server-owned and read-only — shown because they
+    // bound what a dwell report can even claim.
+    const parts = [];
+    if (s.dwellWindowMs != null)    parts.push('dwell window ' + fmtSecs(s.dwellWindowMs));
+    if (s.reservationTtlMs != null) parts.push('reservation TTL ' + fmtSecs(s.reservationTtlMs));
+    document.getElementById('vw-windows').textContent =
+      parts.length ? 'Read-only server settings: ' + parts.join(' · ') + '.' : '';
+  }
+
+  async function saveThreshold() {
+    const msgEl = document.getElementById('vw-threshold-msg');
+    const secs = parseFloat(document.getElementById('vw-threshold').value);
+    if (!Number.isFinite(secs) || secs < 1 || secs > 60) {
+      msgEl.style.color = '#f87171';
+      msgEl.textContent = 'Enter a number between 1 and 60 seconds.';
+      return;
+    }
+    const ms = Math.round(secs * 1000);
+    if (!confirm(
+      'Set the viewability threshold to ' + (ms / 1000).toFixed(1) + 's?\n\n' +
+      'This governs which future impressions bill — and therefore what developers get paid.\n\n' +
+      'It does not re-price history: impressions already settled or already voided keep the ' +
+      'threshold they were judged under.'
+    )) return;
+    msgEl.style.color = '#94a3b8';
+    msgEl.textContent = 'Saving…';
+    try {
+      const res = await apiFetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewabilityMs: ms })
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
+        msgEl.style.color = '#f87171';
+        msgEl.textContent = body.error === 'invalid_viewability_ms'
+          ? 'Rejected by the server: the threshold must be between 1 and 60 seconds.'
+          : 'Rejected by the server: ' + (body.error || ('HTTP ' + res.status));
+        return;
+      }
+      msgEl.style.color = '#4ade80';
+      msgEl.textContent = '✓ Saved — impressions recorded from now on are judged at ' +
+        fmtSecs(body.viewabilityMs) + '.';
+      loadViewability(); // rate tones and the histogram marker both move with it
+    } catch(e) {
+      msgEl.style.color = '#f87171';
+      msgEl.textContent = 'Could not save: ' + e.message;
+    }
+  }
+
+  function renderViewability(rep) {
+    const days = Number(rep.days) || Number(document.getElementById('vw-days').value) || 7;
+    const thresholdMs = Number(rep.thresholdMs);
+    const tSec = Number.isFinite(thresholdMs) ? thresholdMs / 1000 : null;
+
+    document.getElementById('vw-mixed-days').textContent = days;
+    document.getElementById('vw-mixed-banner').style.display = rep.mixedThresholds ? '' : 'none';
+
+    document.getElementById('vw-legend').textContent = tSec == null
+      ? 'Sorted weakest viewable rate first.'
+      : 'Dwell bars: red = under the ' + tSec.toFixed(1) + 's threshold (rendered, never billable), ' +
+        'indigo = at or over it, amber line = where the threshold falls. Sorted weakest viewable rate first.';
+
+    const tbody = document.getElementById('viewability-tbody');
+    const rows = Array.isArray(rep.sponsors) ? rep.sponsors.slice() : [];
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="11" class="empty"><span class="empty-icon">👁</span><strong>Nothing served in this range</strong>Widen the range, or check that an ad slot is active.</td></tr>';
+      return;
+    }
+    // Weakest first: hunting the sponsor that is burning inventory is the job.
+    // "no data" sorts last — it is not a bad rate, it is an absent one.
+    const rank = s => (s.viewabilityRate == null || !Number.isFinite(Number(s.viewabilityRate)))
+      ? Infinity : Number(s.viewabilityRate);
+    rows.sort((a, b) => rank(a) - rank(b));
+
+    tbody.innerHTML = rows.map(s => `
+      <tr>
+        <td>
+          <span class="adv-name">${esc(s.name || s.id)}</span>
+          <div class="stack-hint mono">${esc(s.id)}</div>
+        </td>
+        <td>${vwRateCell(s)}</td>
+        <td>${vwDwellCell(s, tSec)}</td>
+        <td class="vw-num">${vwNum(s.served)}</td>
+        <td class="vw-num">${vwNum(s.rendered)}</td>
+        <td class="vw-num">${vwNum(s.viewable)}</td>
+        <td class="vw-num">${vwNum(s.settled)}</td>
+        <td class="vw-num">${vwNum(s.billable)}</td>
+        <td class="vw-num">${vwNum(s.clicks)}</td>
+        <td class="vw-num ${s.ctr == null ? '' : ctrClass(s.ctr * 100)}">${vwCtr(s.ctr)}</td>
+        <td>
+          <div class="vw-num">${paise2rupee(s.spendPaise || 0)}</div>
+          <div class="stack-hint">${s.budgetDailyPaise != null ? paise2rupee(s.budgetDailyPaise) + '/day' : 'no daily cap'}
+            · ${s.budgetTotalPaise != null ? paise2rupee(s.budgetTotalPaise) + ' total' : '∞ total'}</div>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  // null rate means nothing rendered yet. That is not 0% — saying 0% would send
+  // an admin hunting a sponsor that simply hasn't served.
+  function vwRateCell(s) {
+    const raw = Number(s.viewabilityRate);
+    if (s.viewabilityRate == null || !Number.isFinite(raw)) {
+      return '<div class="vw-rate"><span class="pill pill-gray">no data</span>' +
+             '<div class="dwell-cap">nothing rendered yet</div></div>';
+    }
+    const pct = Math.max(0, Math.min(100, raw * 100));
+    const tone = pct >= 70 ? ['vw-good', 'pill-green', 'good']
+               : pct >= 40 ? ['vw-mid',  'pill-yellow', 'fair']
+               :             ['vw-low',  'pill-red',    'weak'];
+    return `<div class="vw-rate ${tone[0]}">
+        <div class="vw-rate-head">
+          <span class="vw-rate-n">${pct.toFixed(1)}%</span>
+          <span class="pill ${tone[1]}">${tone[2]}</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
+      </div>`;
+  }
+
+  // The tuning instrument: how much inventory sits just under the threshold.
+  // A bucket fails outright when its whole range is below the threshold, and
+  // straddles when the threshold lands inside it. At the 5s default the 2-5 /
+  // 5-8 seam IS the threshold, which is why the marker is drawn separately —
+  // it still shows when the buckets either side happen to be empty.
+  function vwDwellCell(s, tSec) {
+    const h = s.histogram || {};
+    const counts = DWELL_BUCKETS.map(b => Number(h[b[0]]) || 0);
+    const total = counts.reduce((a, b) => a + b, 0);
+    const p = `p50 ${fmtSecs(s.dwellP50Ms)} · p90 ${fmtSecs(s.dwellP90Ms)}`;
+    // Rendered but never reported back — invisible in the buckets, and a drag on
+    // the rate all the same, so it gets said out loud.
+    const unmeasured = Number(s.unmeasured) > 0
+      ? ` · ${Number(s.unmeasured).toLocaleString()} unmeasured` : '';
+    if (!total) {
+      return `<div class="dwell"><div class="dwell-bar dwell-empty"></div>
+        <div class="dwell-cap">no dwell reports yet${unmeasured}</div></div>`;
+    }
+
+    let belowShare = 0, belowN = 0;
+    const segs = DWELL_BUCKETS.map((b, i) => {
+      const label = b[0], lo = b[1], hi = b[2];
+      const n = counts[i];
+      const share = (n / total) * 100;
+      let cls = 'pass';
+      if (tSec != null) {
+        if (hi <= tSec) { cls = 'fail'; belowShare += share; belowN += n; }
+        else if (lo < tSec) cls = 'straddle';
+      }
+      const why = cls === 'fail' ? ' — under threshold, never billable'
+                : cls === 'straddle' ? ' — straddles the threshold'
+                : '';
+      const title = `${label}s: ${n.toLocaleString()} (${share.toFixed(0)}%)${why}`;
+      return `<div class="dwell-seg ${cls}" style="width:${share.toFixed(2)}%" title="${esc(title)}"></div>`;
+    }).join('');
+
+    const mark = tSec == null ? ''
+      : `<div class="dwell-mark" style="left:${belowShare.toFixed(2)}%" title="threshold ${tSec.toFixed(1)}s"></div>`;
+    const under = tSec == null ? ''
+      : ` · ${Math.round((belowN / total) * 100)}% under ${tSec.toFixed(1)}s`;
+    return `<div class="dwell">
+        <div class="dwell-bar" title="${esc(total.toLocaleString() + ' dwell reports')}">${segs}${mark}</div>
+        <div class="dwell-cap">${p}${under}${unmeasured}</div>
+      </div>`;
   }
 
   // ── Init ─────────────────────────────────────────────────────

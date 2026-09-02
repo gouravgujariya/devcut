@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { generateKeyPairSync, createHash, randomUUID } = require("node:crypto");
+const { execFileSync } = require("node:child_process");
 const jwt = require("jsonwebtoken");
 
 const DB_PATH = path.join(os.tmpdir(), `devcut-test-${process.pid}.db`);
@@ -19,6 +20,7 @@ process.env.RSA_PRIVATE_KEY = keys.privateKey.export({ type: "pkcs8", format: "p
 
 const app = require("./backend");
 const db = require("./db");
+const { DWELL_WINDOW_MS } = require("./middleware");
 
 let base;
 // `ip` sets X-Forwarded-For. The app runs with `trust proxy: 1`, so each value
@@ -47,6 +49,16 @@ async function main() {
   const reg = await api("POST", "/v1/register", { inviteCode: "DCUT-TEST-CODE-01" });
   assert.strictEqual(reg.status, 200, "register failed: " + JSON.stringify(reg.body));
   const { token, userId } = reg.body;
+  const mainUser = { token, userId };
+
+  // Every mint now stamps an impressions row, and rateLimitSponsorLine puts a 25s
+  // floor between mints. Tests draw far faster than any human client, so they walk
+  // the user's rows back past the floor first; the floor itself gets its own block.
+  const backdate = db.prepare("UPDATE impressions SET ts = ts - 60 WHERE user_id = ?");
+  const line = async (u, qs = "", ip) => {
+    backdate.run(u.userId);
+    return api("GET", "/v1/sponsor-line" + qs, undefined, u.token, ip);
+  };
 
   // ── POST /v1/me/profile persists, GET /v1/me exposes it ───────────────────
   const prof = await api("POST", "/v1/me/profile", { experienceLevel: "senior", primaryStack: "go", country: "India" }, token);
@@ -64,17 +76,17 @@ async function main() {
   sponsor("sponsor-idle", { slot_type: "idle", bid_paise: 10, logo_url: "https://cdn.example.com/i.png" });
   sponsor("sponsor-build", { slot_type: "build", bid_paise: 100 });
 
-  const idleLine = await api("GET", "/v1/sponsor-line?idle=1", undefined, token);
+  const idleLine = await line(mainUser, "?idle=1");
   assert.strictEqual(idleLine.body.id, "sponsor-idle", "idle=1 must prefer the idle slot over the higher bid");
   assert.strictEqual(idleLine.body.logoUrl, "https://cdn.example.com/i.png");
 
-  const buildLine = await api("GET", "/v1/sponsor-line?taskType=npm", undefined, token);
+  const buildLine = await line(mainUser, "?taskType=npm");
   assert.strictEqual(buildLine.body.id, "sponsor-build", "an active tracked task must pick the build-slot sponsor");
   assert.strictEqual(buildLine.body.logoUrl, null);
 
   // stack targeting outranks bid, and NULL slot_type still counts as 'all'
   sponsor("sponsor-go", { slot_type: null, bid_paise: 5, target_stack: "go,rust" });
-  const goLine = await api("GET", "/v1/sponsor-line?taskType=npm", undefined, token);
+  const goLine = await line(mainUser, "?taskType=npm");
   assert.strictEqual(goLine.body.id, "sponsor-go", "target_stack match must win over a higher bid");
   db.prepare("UPDATE sponsors SET active = 0 WHERE id = ?").run("sponsor-go");
 
@@ -93,6 +105,10 @@ async function main() {
   assert.strictEqual(an.impressionCount, 2);
   assert.strictEqual(an.clickCount, 1);
   assert.strictEqual(an.availablePaise, 85);
+  // analytics must quote the same settled-only balance as /v1/earnings and
+  // /v1/withdraw — the web dashboard reads "available to withdraw" from here.
+  assert.strictEqual(an.settledPaise, 85, "analytics must expose the settled balance");
+  assert.strictEqual(an.pendingPaise, 0, "nothing in this fixture is still in flight");
   assert.strictEqual(an.daily.length, 1);
   assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(an.daily[0].day), "daily.day must be a YYYY-MM-DD from date(ts,'unixepoch')");
   assert.strictEqual(an.daily[0].impressions, 2);
@@ -194,7 +210,7 @@ async function main() {
   db.exec("UPDATE sponsors SET active = 0"); // isolate from earlier test sponsors
   sponsor("sponsor-capped", { bid_paise: 42, budget_paise_total: 50 });
   ins.run(userId, "sponsor-capped", null, 30, 50); // lifetime bid-spend already at the cap
-  const cappedLine = await api("GET", "/v1/sponsor-line", undefined, token);
+  const cappedLine = await line(mainUser);
   assert.strictEqual(cappedLine.body, null, "sponsor must drop out once lifetime budget is spent");
 
   const overview = (await api("GET", "/api/sponsors")).body.find(s => s.id === "sponsor-capped");
@@ -207,45 +223,41 @@ async function main() {
   sponsor("sponsor-w3", { bid_paise: 100 });
   const seen = new Set();
   for (let i = 0; i < 40; i++) {
-    const line = await api("GET", "/v1/sponsor-line", undefined, token);
-    seen.add(line.body.id);
+    const draw = await line(mainUser);
+    seen.add(draw.body.id);
   }
   assert.ok(seen.size > 1, "weighted selection should surface more than one sponsor across draws, got: " + [...seen]);
 
-  // ── impression tokens: required, single-use, budget-enforced at spend time ──
+  // ── impression tokens: required, single-use, budget-enforced at mint time ──
   db.exec("UPDATE sponsors SET active = 0");
   sponsor("sponsor-tok", { bid_paise: 42, budget_paise_total: 60 }); // room for exactly one bid
-  // sidestep the 25s per-user impression floor by backdating prior impressions
-  const backdate = db.prepare("UPDATE impressions SET ts = ts - 60 WHERE user_id = ?");
-
-  const tokLine = await api("GET", "/v1/sponsor-line", undefined, token);
-  assert.ok(tokLine.body.impressionToken, "sponsor-line must return an impressionToken");
 
   // idle pays less: same sponsor, idle=1 → half payout in both display and token
-  const idleHalf = await api("GET", "/v1/sponsor-line?idle=1", undefined, token);
+  const idleHalf = await line(mainUser, "?idle=1");
   assert.strictEqual(idleHalf.body.payoutPaise, 13, "idle impressions must pay round(25 * 0.5)");
 
-  backdate.run(userId);
+  // Re-drawing moves the one reservation rather than adding a second, so this
+  // sponsor's 60p cap still has room for it even though idleHalf reserved 42p.
+  const tokLine = await line(mainUser);
+  assert.ok(tokLine.body.impressionToken, "a re-roll must still mint — the previous reservation releases its hold");
+
   assert.strictEqual((await api("POST", "/v1/impressions", { taskType: "npm" }, token)).status, 400, "impression without token must 400");
   assert.strictEqual((await api("POST", "/v1/impressions", { token: "garbage" }, token)).body.error, "invalid_impression_token");
 
   const imp1 = await api("POST", "/v1/impressions", { token: tokLine.body.impressionToken, taskType: "npm" }, token);
   assert.strictEqual(imp1.status, 200, "tokened impression must credit: " + JSON.stringify(imp1.body));
 
-  backdate.run(userId);
   const dup = await api("POST", "/v1/impressions", { token: tokLine.body.impressionToken }, token);
   assert.strictEqual(dup.status, 409, "same token twice must 409");
   assert.strictEqual(dup.body.error, "duplicate_impression");
 
-  // budget stop: 42 spent of 60 — sponsor still serveable, but a second bid (84 > 60) must not land
-  backdate.run(userId);
-  const tokLine2 = await api("GET", "/v1/sponsor-line", undefined, token);
-  assert.ok(tokLine2.body?.impressionToken, "sponsor with budget headroom must still serve");
-  const imp2 = await api("POST", "/v1/impressions", { token: tokLine2.body.impressionToken }, token);
-  assert.strictEqual(imp2.status, 410, "impression past the budget must 410: " + JSON.stringify(imp2.body));
-  assert.strictEqual(imp2.body.error, "budget_exhausted");
-  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE sponsor_id = 'sponsor-tok'").get().n, 1,
-    "budget-rejected impression must not be inserted");
+  // Budget stop: 42 of 60 is spent, so a second 42p bid cannot be *reserved* at all.
+  // It used to be sold and then refused at redemption; refusing to mint is strictly
+  // better — the client never displays a line nobody can be paid for.
+  const tokLine2 = await line(mainUser);
+  assert.strictEqual(tokLine2.body, null, "a sponsor with no room for another bid must not mint: " + JSON.stringify(tokLine2.body));
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE sponsor_id = 'sponsor-tok' AND state != 'void'").get().n, 1,
+    "an over-budget draw must leave no reservation behind");
 
   // ── UPI hygiene: format check + 24h withdrawal lock after a change ─────────
   assert.strictEqual((await api("PUT", "/v1/profile/upi", { upiId: "bad upi!" }, token)).status, 400, "junk UPI must 400");
@@ -288,7 +300,7 @@ async function main() {
   // ════════════════════════════════════════════════════════════════════════════
   const IP = { hdr: "10.9.0.1", sess: "10.9.0.2", forge: "10.9.0.3", pin: "10.9.0.4",
                caps: "10.9.0.5", money: "10.9.0.6", life: "10.9.0.7", invite: "10.9.0.8",
-               signup: "10.9.0.9", drift: "10.9.0.10", click: "10.9.0.11" };
+               signup: "10.9.0.9", drift: "10.9.0.10", click: "10.9.0.11", settle: "10.9.0.14" };
 
   let inviteSeq = 0;
   const newUser = async (ip) => {
@@ -304,7 +316,9 @@ async function main() {
     return { status: res.status, body: await res.json() };
   };
   const sha256 = (s) => createHash("sha256").update(s).digest("hex");
-  const impressionCount = (uid) => db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE user_id = ?").get(uid).n;
+  // Credited impressions. A row exists from the mint onward, so this deliberately
+  // counts what was actually earned (billable = 1), not what was reserved.
+  const impressionCount = (uid) => db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE user_id = ? AND billable = 1").get(uid).n;
 
   // ── requireAuth: every rejection shape, on real routes ────────────────────
   // requireAuth is the only thing in front of every money route, and a wrong
@@ -433,7 +447,7 @@ async function main() {
   db.exec("UPDATE sponsors SET active = 0");
   sponsor("sponsor-pin", { payout_paise: 25, bid_paise: 42 });
   const pinUser = await newUser(IP.pin);
-  const pinLine = await api("GET", "/v1/sponsor-line?idle=1", undefined, pinUser.token, IP.pin);
+  const pinLine = await line(pinUser, "?idle=1", IP.pin);
   assert.strictEqual(pinLine.body.payoutPaise, 13, "idle slot must be served at half payout");
   const credited = await api("POST", "/v1/impressions",
     { token: pinLine.body.impressionToken, taskType: "npm", payoutPaise: 999999, payout_paise: 999999, bid_paise: 999999 },
@@ -454,9 +468,8 @@ async function main() {
     /UNIQUE/, "a duplicate jti must be rejected by the unique index, not just by the app-level check");
 
   // Advertiser pauses the campaign while a token is in flight → no credit, no 500.
-  const pausedLine = await api("GET", "/v1/sponsor-line", undefined, pinUser.token, IP.pin);
+  const pausedLine = await line(pinUser, "", IP.pin);
   db.prepare("UPDATE sponsors SET active = 0 WHERE id = ?").run("sponsor-pin");
-  backdate.run(pinUser.userId);
   const paused = await api("POST", "/v1/impressions", { token: pausedLine.body.impressionToken }, pinUser.token, IP.pin);
   assert.strictEqual(paused.status, 400, "an impression for a paused sponsor must 400, got " + paused.status);
   assert.strictEqual(paused.body.error, "unknown_sponsor", "a paused sponsor must report unknown_sponsor");
@@ -465,29 +478,30 @@ async function main() {
   db.exec("UPDATE sponsors SET active = 0");
   sponsor("sponsor-daily", { bid_paise: 42, budget_paise_daily: 50 }); // room for exactly one bid today
   const dayUser = await newUser(IP.pin);
-  const day1 = await api("GET", "/v1/sponsor-line", undefined, dayUser.token, IP.pin);
+  const day1 = await line(dayUser, "", IP.pin);
   assert.strictEqual((await api("POST", "/v1/impressions", { token: day1.body.impressionToken }, dayUser.token, IP.pin)).status, 200,
     "first impression inside the daily budget must credit");
-  const day2 = await api("GET", "/v1/sponsor-line", undefined, dayUser.token, IP.pin);
-  backdate.run(dayUser.userId);
-  const day2res = await api("POST", "/v1/impressions", { token: day2.body.impressionToken }, dayUser.token, IP.pin);
-  assert.strictEqual(day2res.status, 410, "an impression past the daily budget must 410: " + JSON.stringify(day2res.body));
-  assert.strictEqual(day2res.body.error, "budget_exhausted", "daily overspend must report budget_exhausted");
-  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE sponsor_id = 'sponsor-daily'").get().n, 1,
-    "a daily-budget-rejected impression must not be inserted");
+  const day2 = await line(dayUser, "", IP.pin);
+  assert.strictEqual(day2.body, null, "a second bid past the daily budget must not mint: " + JSON.stringify(day2.body));
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE sponsor_id = 'sponsor-daily' AND state != 'void'").get().n, 1,
+    "a daily-budget-rejected draw must leave no reservation behind");
 
   // ── per-user impression caps: the anti-spam controls on payouts ───────────
   db.exec("UPDATE sponsors SET active = 0");
   sponsor("sponsor-cap", { payout_paise: 25, bid_paise: 42 });
   const capUser = await newUser(IP.caps);
-  const cap1 = await api("GET", "/v1/sponsor-line", undefined, capUser.token, IP.caps);
+  const cap1 = await api("GET", "/v1/sponsor-line", undefined, capUser.token, IP.caps); // fresh user: no floor yet
   assert.strictEqual((await api("POST", "/v1/impressions", { token: cap1.body.impressionToken }, capUser.token, IP.caps)).status, 200,
     "first impression must credit");
-  const cap2 = await api("GET", "/v1/sponsor-line", undefined, capUser.token, IP.caps);
-  const tooFast = await api("POST", "/v1/impressions", { token: cap2.body.impressionToken }, capUser.token, IP.caps);
-  assert.strictEqual(tooFast.status, 429, "a second impression inside the 25s floor must 429, got " + tooFast.status);
-  assert.strictEqual(tooFast.body.error, "too_fast", "impression spam must report too_fast");
-  assert.strictEqual(impressionCount(capUser.userId), 1, "a too_fast impression must not be credited");
+  // The 25s floor sits on the mint now, not on redemption: asking for inventory is
+  // what creates the row, so asking is what has to be paced. On POST it raced the
+  // client's own 30s rotation with 5s to spare.
+  const tooFast = await api("GET", "/v1/sponsor-line", undefined, capUser.token, IP.caps);
+  assert.strictEqual(tooFast.status, 429, "a second mint inside the 25s floor must 429, got " + tooFast.status);
+  assert.strictEqual(tooFast.body.error, "too_fast", "mint spam must report too_fast");
+  assert.strictEqual(impressionCount(capUser.userId), 1, "a too_fast mint must not be credited");
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE user_id = ?").get(capUser.userId).n, 1,
+    "a refused mint must not leave a reservation behind either");
 
   // 500/day hard cap. Rows are backdated so the 25s floor doesn't answer first;
   // skipped in the opening minute of the UTC day, when "60s ago" is yesterday
@@ -497,7 +511,7 @@ async function main() {
     backdate.run(capUser.userId); // the credited impression above is still "now"
     const capFill = db.prepare("INSERT INTO impressions (user_id, sponsor_id, payout_paise, bid_paise, ts) VALUES (?,?,?,?,unixepoch() - 60)");
     db.transaction(() => { for (let i = 0; i < 500; i++) capFill.run(capUser.userId, "sponsor-cap", 25, 0); })();
-    const cap3 = await api("GET", "/v1/sponsor-line", undefined, capUser.token, IP.caps);
+    const cap3 = await line(capUser, "", IP.caps);
     const capped = await api("POST", "/v1/impressions", { token: cap3.body.impressionToken }, capUser.token, IP.caps);
     assert.strictEqual(capped.status, 429, "the 501st impression of the day must 429, got " + capped.status);
     assert.strictEqual(capped.body.error, "rate_limit_exceeded", "the daily cap must report rate_limit_exceeded");
@@ -509,15 +523,14 @@ async function main() {
     // 60p is 15000p — under the 500-row cap, over the 12500p ceiling, so only the
     // rupee cap can answer here.
     const richUser = await newUser(IP.caps);
-    const rich1 = await api("GET", "/v1/sponsor-line", undefined, richUser.token, IP.caps);
+    const rich1 = await line(richUser, "", IP.caps);
     assert.strictEqual((await api("POST", "/v1/impressions", { token: rich1.body.impressionToken }, richUser.token, IP.caps)).status, 200,
       "first impression must credit before the rupee cap fills");
-    backdate.run(richUser.userId);
     const richFill = db.prepare("INSERT INTO impressions (user_id, sponsor_id, payout_paise, bid_paise, ts) VALUES (?,?,?,?,unixepoch() - 60)");
     db.transaction(() => { for (let i = 0; i < 250; i++) richFill.run(richUser.userId, "sponsor-cap", 60, 0); })();
     assert.ok(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE user_id = ?").get(richUser.userId).n < 500,
       "the rupee-cap fixture must stay under the row cap, or it proves nothing");
-    const rich2 = await api("GET", "/v1/sponsor-line", undefined, richUser.token, IP.caps);
+    const rich2 = await line(richUser, "", IP.caps);
     const richCapped = await api("POST", "/v1/impressions", { token: rich2.body.impressionToken }, richUser.token, IP.caps);
     assert.strictEqual(richCapped.status, 429, "past the daily rupee ceiling must 429, got " + richCapped.status);
     assert.strictEqual(richCapped.body.error, "daily_earnings_cap", "the rupee cap must report daily_earnings_cap");
@@ -530,12 +543,12 @@ async function main() {
   sponsor("sponsor-nobudget", { payout_paise: 25, bid_paise: 42 });
   db.prepare("UPDATE sponsors SET budget_paise_daily = NULL, budget_paise_total = NULL WHERE id = 'sponsor-nobudget'").run();
   const defUser = await newUser(IP.caps);
-  const defLine = await api("GET", "/v1/sponsor-line", undefined, defUser.token, IP.caps);
+  const defLine = await line(defUser, "", IP.caps);
   assert.ok(defLine.body.impressionToken, "a budgetless sponsor must still serve below the default ceiling");
   // Spend the default ceiling on someone else's rows, then confirm it stops serving.
   const burn = db.prepare("INSERT INTO impressions (user_id, sponsor_id, payout_paise, bid_paise, ts) VALUES (?,?,?,?,unixepoch())");
   db.transaction(() => { for (let i = 0; i < 2500; i++) burn.run(defUser.userId, "sponsor-nobudget", 0, 42); })();
-  const exhausted = await api("GET", "/v1/sponsor-line", undefined, defUser.token, IP.caps);
+  const exhausted = await line(defUser, "", IP.caps);
   // No eligible sponsor answers with an empty body, not a line with no token.
   assert.ok(!exhausted.body || !exhausted.body.impressionToken,
     "a budgetless sponsor past the default daily ceiling must stop serving: " + JSON.stringify(exhausted.body));
@@ -559,7 +572,7 @@ async function main() {
   assert.strictEqual(ghost.status, 400, "a click on an unknown sponsor must 400, got " + ghost.status);
 
   // Real path: serve and redeem an impression, then the click is legitimate.
-  const clickLine = await api("GET", "/v1/sponsor-line", undefined, clickUser.token, IP.click);
+  const clickLine = await line(clickUser, "", IP.click);
   assert.strictEqual((await api("POST", "/v1/impressions", { token: clickLine.body.impressionToken }, clickUser.token, IP.click)).status, 200,
     "the click fixture needs a credited impression");
   const realClick = await api("POST", "/v1/clicks", { lineId: "sponsor-click" }, clickUser.token, IP.click);
@@ -720,24 +733,31 @@ async function main() {
   assert.ok(!sign3.body.resent, "a genuinely different address must get its own invite");
   assert.strictEqual(inviteRows(), n0 + 2, "a distinct address must mint exactly one more invite");
 
-  // ── regression: budget check must bill the token's pinned bid ─────────────
-  // POST /v1/impressions checks the budget against `claims.bid` — the bid the
-  // impression was sold at — matching what the insert records. Re-pricing a
-  // campaign while a token is in flight must not let spend overshoot the cap.
+  // ── regression: spend is billed at the price it was SOLD at ───────────────
+  // The reservation records bid_paise at mint time, and the render-time re-check
+  // sums those recorded bids. Re-pricing a campaign, or cutting its cap, must not
+  // re-value spend that is already committed: if the check read the sponsor's
+  // *current* 10p bid, 200p of sold inventory would look like 20p and reopen a cap
+  // that is genuinely full.
   db.exec("UPDATE sponsors SET active = 0");
-  sponsor("sponsor-drift", { payout_paise: 60, bid_paise: 100, budget_paise_total: 150 });
+  sponsor("sponsor-drift", { payout_paise: 60, bid_paise: 100, budget_paise_total: 250 });
   const drift = await newUser(IP.drift);
-  const drift1 = await api("GET", "/v1/sponsor-line", undefined, drift.token, IP.drift);
-  const drift2 = await api("GET", "/v1/sponsor-line", undefined, drift.token, IP.drift); // client holds a second line
+  const drift1 = await line(drift, "", IP.drift);
   assert.strictEqual((await api("POST", "/v1/impressions", { token: drift1.body.impressionToken }, drift.token, IP.drift)).status, 200,
-    "first 100p impression under the 150p cap must credit");
-  backdate.run(drift.userId);
-  db.prepare("UPDATE sponsors SET bid_paise = 10 WHERE id = 'sponsor-drift'").run(); // admin re-prices the campaign
-  assert.strictEqual((await api("POST", "/v1/impressions", { token: drift2.body.impressionToken }, drift.token, IP.drift)).status, 410,
-    "the in-flight token's pinned 100p bid would overshoot the 150p cap — must be refused");
-  const drifted = db.prepare("SELECT COALESCE(SUM(bid_paise), 0) AS spend FROM impressions WHERE sponsor_id = 'sponsor-drift'").get().spend;
-  assert.ok(drifted <= 150,
-    "recorded spend must never exceed the lifetime budget, got " + drifted + "p");
+    "first 100p impression under the 250p cap must credit");
+  const drift2 = await line(drift, "", IP.drift);   // a second line, still inside the cap
+  assert.ok(drift2.body?.impressionToken, "a second 100p reservation must fit under the 250p cap");
+
+  // Admin re-prices the campaign and cuts its cap while that line is in flight.
+  db.prepare("UPDATE sponsors SET bid_paise = 10, budget_paise_total = 150 WHERE id = 'sponsor-drift'").run();
+  const drifted2 = await api("POST", "/v1/impressions", { token: drift2.body.impressionToken }, drift.token, IP.drift);
+  assert.strictEqual(drifted2.status, 410,
+    "200p of committed spend against a 150p cap must be refused, not re-valued at the new 10p bid: " + JSON.stringify(drifted2.body));
+  assert.strictEqual(drifted2.body.error, "budget_exhausted", "an over-cap render must report budget_exhausted");
+  assert.strictEqual(db.prepare("SELECT state FROM impressions WHERE jti = ?").get(jwt.decode(drift2.body.impressionToken).jti).state, "void",
+    "a reservation refused for budget must be voided, not left holding the cap until TTL");
+  const drifted = db.prepare("SELECT COALESCE(SUM(bid_paise), 0) AS spend FROM impressions WHERE sponsor_id = 'sponsor-drift' AND state != 'void'").get().spend;
+  assert.strictEqual(drifted, 100, "recorded spend must never exceed the lifetime budget, got " + drifted + "p");
 
   // ── email hygiene: undeliverable domains never mint an invite code ────────
   const IP_MAIL = "10.9.0.11";
@@ -789,13 +809,550 @@ async function main() {
   assert.strictEqual(funnel2.ext_pings, funnel.ext_pings + 1, "an anonymous ?src=ext ping must bump ext_ping_anon");
 
   const flags = (await api("GET", "/api/flags")).body;
-  for (const k of ["shared_ips", "signup_bursts", "cap_hitters"]) {
+  for (const k of ["shared_ips", "signup_bursts", "cap_hitters", "dwell_flatline", "cadence_flatline", "shared_upi"]) {
     assert.ok(Array.isArray(flags[k]), "/api/flags." + k + " must be an array, got " + JSON.stringify(flags[k]));
   }
+
+  // ── cross-device farming signals: none of these need a device ID ──────────
+  // A device ID false-positives the common innocent case (one dev, two
+  // machines) that these signals are built to leave alone — see dwellFlat below.
+
+  // dwell_flatline: near-identical visible_ms every time reads as a script,
+  // not a glance. Two accounts: one flat (flagged), one with real spread (not).
+  const flatUser = await newUser(IP.settle);
+  const noisyUser = await newUser(IP.settle);
+  const dwellRow = db.prepare(
+    "INSERT INTO impressions (user_id, sponsor_id, task_type, payout_paise, bid_paise, state, billable, visible_ms, ts) VALUES (?,?,?,?,?,'settled',1,?,unixepoch())"
+  );
+  for (let i = 0; i < 20; i++) dwellRow.run(flatUser.userId, "sponsor-idle", "npm", 25, 42, 5100 + (i % 2)); // 5100-5101ms, 20x
+  for (let i = 0; i < 20; i++) dwellRow.run(noisyUser.userId, "sponsor-idle", "npm", 25, 42, 3000 + i * 1000); // 3000..22000ms
+
+  const flags2 = (await api("GET", "/api/flags")).body;
+  assert.ok(flags2.dwell_flatline.some(r => r.user_id === flatUser.userId),
+    "an account with <1s dwell spread over 20 views must be flagged");
+  assert.ok(!flags2.dwell_flatline.some(r => r.user_id === noisyUser.userId),
+    "an account with real dwell variety must not be flagged");
+
+  // A user who legitimately maxes the dwell ceiling every time (always runs a
+  // long Docker build) must not be flagged just for being consistently long.
+  const cappedUser = await newUser(IP.settle);
+  for (let i = 0; i < 20; i++) dwellRow.run(cappedUser.userId, "sponsor-idle", "npm", 25, 42, DWELL_WINDOW_MS);
+  const flags2b = (await api("GET", "/api/flags")).body;
+  assert.ok(!flags2b.dwell_flatline.some(r => r.user_id === cappedUser.userId),
+    "always hitting the dwell ceiling is not the same signal as a flat script and must not be flagged");
+
+  // cadence_flatline: impressions landing exactly MINT_FLOOR_SEC apart, every
+  // time, reads as scripted; a human build cadence has noise.
+  const cadenceUser = await newUser(IP.settle);
+  const cadenceRow = db.prepare(
+    "INSERT INTO impressions (user_id, sponsor_id, task_type, payout_paise, bid_paise, state, billable, ts) VALUES (?,?,?,?,?,'settled',1,?)"
+  );
+  const cadenceStart = Math.floor(Date.now() / 1000) - 20 * 25; // NOT `base` — that name is the module-level server URL
+  for (let i = 0; i < 21; i++) cadenceRow.run(cadenceUser.userId, "sponsor-idle", "npm", 25, 42, cadenceStart + i * 25); // exactly 25s apart, 21 rows -> 20 gaps
+  const flags3 = (await api("GET", "/api/flags")).body;
+  assert.ok(flags3.cadence_flatline.some(r => r.user_id === cadenceUser.userId),
+    "impressions landing exactly the same number of seconds apart every time must be flagged");
+  assert.ok(!flags3.cadence_flatline.some(r => r.user_id === mainUser.userId),
+    "the main test user's varied mint timings must not be flagged");
+
+  // shared_upi: two active accounts on the same payout ID outranks a shared IP
+  // as a signal — almost nothing innocent explains it.
+  const upiA = await newUser(IP.settle);
+  const upiB = await newUser(IP.settle);
+  await api("PUT", "/v1/profile/upi", { upiId: "farmer@upi" }, upiA.token);
+  await api("PUT", "/v1/profile/upi", { upiId: "farmer@upi" }, upiB.token);
+  const flags4 = (await api("GET", "/api/flags")).body;
+  const upiHit = flags4.shared_upi.find(r => r.upi_id === "farmer@upi");
+  assert.ok(upiHit, "two accounts on the same UPI ID must be flagged");
+  assert.strictEqual(upiHit.user_count, 2);
+  assert.ok(upiHit.user_ids.includes(upiA.userId) && upiHit.user_ids.includes(upiB.userId));
+
+  // A deleted account clears its upi_id (see DELETE /v1/me) — it must not
+  // haunt this query as a phantom third match.
+  await api("DELETE", "/v1/me", undefined, upiA.token);
+  const flags5 = (await api("GET", "/api/flags")).body;
+  const upiAfterDelete = flags5.shared_upi.find(r => r.upi_id === "farmer@upi");
+  assert.ok(!upiAfterDelete, "a deleted account's cleared upi_id must not keep a single remaining user flagged as 'shared'");
 
   // ── admin auth fails closed ────────────────────────────────────────────────
   const noKey = await fetch(base + "/api/overview");
   assert.strictEqual(noKey.status, 401, "admin endpoint without x-admin-key must be rejected");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // The impression lifecycle: reserved -> rendered. An impression used to be a
+  // single INSERT at credit time with no evidence the ad was ever on screen; it
+  // is now a row born at the mint and promoted as evidence arrives.
+  // ══════════════════════════════════════════════════════════════════════════
+  db.exec("UPDATE sponsors SET active = 0");
+  sponsor("sponsor-life", { payout_paise: 25, bid_paise: 42 });
+  const IP_LIFE = "10.9.0.13";
+  const lc = await newUser(IP_LIFE);
+  const jtiOf = (tok) => jwt.decode(tok).jti;
+  const rowFor = (tok) => db.prepare("SELECT * FROM impressions WHERE jti = ?").get(jtiOf(tok));
+  const earnings = async (u, ip) => (await api("GET", "/v1/earnings", undefined, u.token, ip)).body;
+
+  // ── the mint creates the row, and it is worth nothing yet ─────────────────
+  const lc1 = await line(lc, "?taskType=npm", IP_LIFE);
+  const reserved = rowFor(lc1.body.impressionToken);
+  assert.ok(reserved, "a mint must create an impressions row keyed by the token's jti");
+  assert.strictEqual(reserved.state, "reserved", "a minted row must start in state 'reserved'");
+  assert.strictEqual(reserved.billable, 0, "a reservation must not be billable");
+  assert.strictEqual(reserved.payout_paise, 25, "the reservation must pin the payout it was served at");
+  assert.strictEqual(reserved.rendered_at, null, "nothing has rendered yet");
+  assert.strictEqual((await earnings(lc, IP_LIFE)).totalPaise, 0, "a reservation must pay nothing until the ad renders");
+  assert.strictEqual((await earnings(lc, IP_LIFE)).impressionCount, 0, "a reservation must not show up as an impression");
+
+  // ── SINGLE OUTSTANDING RESERVATION ────────────────────────────────────────
+  // Re-rolling the auction moves the reservation; it does not deal another
+  // redeemable option. Mint N lines, redeem the best is the entire re-roll farm,
+  // and it has to come out at one.
+  const lc2 = await line(lc, "", IP_LIFE);
+  assert.strictEqual(rowFor(lc1.body.impressionToken).state, "void", "a new mint must void the previous reservation");
+  assert.strictEqual(rowFor(lc2.body.impressionToken).state, "reserved", "the newest mint must be the live reservation");
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE user_id = ? AND state = 'reserved'").get(lc.userId).n, 1,
+    "a user may never hold more than one redeemable reservation, however often they re-roll");
+
+  const voided = await api("POST", "/v1/impressions", { token: lc1.body.impressionToken }, lc.token, IP_LIFE);
+  assert.strictEqual(voided.status, 409, "redeeming a re-rolled (voided) reservation must 409, got " + voided.status);
+  assert.strictEqual(voided.body.error, "reservation_void", "a voided reservation must report reservation_void");
+  assert.strictEqual((await earnings(lc, IP_LIFE)).totalPaise, 0, "a voided reservation must never pay");
+
+  // ── budget accounting counts reservations, ignores voids ──────────────────
+  assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM impressions WHERE sponsor_id = 'sponsor-life'").get().n, 2,
+    "both mints must have left a row behind");
+  assert.strictEqual((await api("GET", "/api/sponsors")).body.find(s => s.id === "sponsor-life").total_spend_paise, 42,
+    "one live reservation holds one bid — the voided one must have released its hold");
+
+  // ── reserved -> rendered is what makes it money ───────────────────────────
+  const rendered = await api("POST", "/v1/impressions", { token: lc2.body.impressionToken, taskType: "npm" }, lc.token, IP_LIFE);
+  assert.strictEqual(rendered.status, 200, "rendering the live reservation must credit: " + JSON.stringify(rendered.body));
+  const live = rowFor(lc2.body.impressionToken);
+  assert.strictEqual(live.state, "rendered", "a credited impression must be in state 'rendered'");
+  assert.strictEqual(live.billable, 1, "a rendered impression must be billable");
+  assert.ok(live.rendered_at > 0, "rendered_at must be stamped by the server, not the client");
+  assert.strictEqual(live.settled_at, null, "settlement is a later phase — nothing may settle here");
+  assert.strictEqual((await earnings(lc, IP_LIFE)).totalPaise, 25, "a rendered impression must pay exactly the pinned payout");
+
+  const replay = await api("POST", "/v1/impressions", { token: lc2.body.impressionToken }, lc.token, IP_LIFE);
+  assert.strictEqual(replay.status, 409, "replaying a rendered token must 409, got " + replay.status);
+  assert.strictEqual(replay.body.error, "duplicate_impression", "replay must keep reporting duplicate_impression — clients in the wild branch on it");
+  assert.strictEqual((await earnings(lc, IP_LIFE)).totalPaise, 25, "a replay must not pay twice");
+
+  // A perfectly signed token with no reservation behind it credits nothing — the
+  // row, not the signature, is now the thing being redeemed.
+  const orphan = jwt.sign({ spn: "sponsor-life", pay: 25, bid: 42, jti: randomUUID() }, keys.privateKey,
+    { algorithm: "RS256", subject: lc.userId, expiresIn: "90s", issuer: "kickback-status", audience: "impression" });
+  const orphanRes = await api("POST", "/v1/impressions", { token: orphan }, lc.token, IP_LIFE);
+  assert.strictEqual(orphanRes.status, 404, "a signed token with no reservation must 404, got " + orphanRes.status);
+  assert.strictEqual(orphanRes.body.error, "unknown_reservation", "a missing reservation must report unknown_reservation");
+
+  // ── dwell: lie about attention all you like, never about wall-clock ───────
+  const dwell = (body, u = lc) => api("POST", "/v1/impressions/dwell", body, u.token, IP_LIFE);
+  const lcTok = lc2.body.impressionToken;
+
+  // Wind rendered_at back a known 5s, then claim eleven days of attention.
+  db.prepare("UPDATE impressions SET rendered_at = rendered_at - 5 WHERE id = ?").run(live.id);
+  const inflated = await dwell({ token: lcTok, visibleMs: 999_999_999, focusedMs: 999_999_999 });
+  assert.strictEqual(inflated.status, 200, "dwell on a rendered impression must be accepted: " + JSON.stringify(inflated.body));
+  assert.ok(inflated.body.visibleMs >= 5000 && inflated.body.visibleMs <= 6000,
+    "an inflated visibleMs must clamp to the ~5s that really elapsed, got " + inflated.body.visibleMs);
+  assert.strictEqual(inflated.body.focusedMs, inflated.body.visibleMs, "focusedMs must clamp against the same clock");
+  assert.strictEqual(rowFor(lcTok).visible_ms, inflated.body.visibleMs, "what gets stored is the clamped value, not the claim");
+
+  // The window is the other ceiling: an hour of genuine wall-clock still only
+  // yields DWELL_WINDOW_MS. Nobody watches a status bar for two minutes.
+  db.prepare("UPDATE impressions SET rendered_at = rendered_at - 3600 WHERE id = ?").run(live.id);
+  const windowed = await dwell({ token: lcTok, visibleMs: 999_999_999, focusedMs: 999_999_999 });
+  assert.strictEqual(windowed.body.visibleMs, DWELL_WINDOW_MS, "dwell must cap at DWELL_WINDOW_MS however long the row has existed");
+
+  // Monotonic: a later, smaller report cannot walk the number back down.
+  const shrunk = await dwell({ token: lcTok, visibleMs: 1, focusedMs: -50_000 });
+  assert.strictEqual(shrunk.body.visibleMs, DWELL_WINDOW_MS, "dwell must never decrease");
+  assert.strictEqual(shrunk.body.focusedMs, DWELL_WINDOW_MS, "a negative report must clamp to 0 and then lose to the stored max");
+  assert.strictEqual(rowFor(lcTok).visible_ms, DWELL_WINDOW_MS, "the stored dwell must be the running max");
+  assert.strictEqual((await dwell({ token: lcTok, visibleMs: "lots", focusedMs: 0 })).status, 400, "a non-numeric dwell must 400");
+  assert.strictEqual((await dwell({ token: lcTok, visibleMs: 10 })).status, 400, "a dwell report missing focusedMs must 400");
+
+  // Dwell measures; it does not promote. Deciding what counts as seen belongs to
+  // the settlement sweeper, which is a later phase.
+  assert.strictEqual(rowFor(lcTok).state, "rendered", "dwell must not move the row out of 'rendered'");
+  assert.strictEqual((await earnings(lc, IP_LIFE)).totalPaise, 25, "dwell must not change what is owed");
+
+  // Nothing to measure on a row that was never shown, never existed, or isn't yours.
+  const lc3 = await line(lc, "", IP_LIFE);
+  await line(lc, "", IP_LIFE);   // the re-roll voids lc3
+  const deadDwell = await dwell({ token: lc3.body.impressionToken, visibleMs: 100, focusedMs: 100 });
+  assert.strictEqual(deadDwell.status, 409, "dwell on a voided reservation must 409, got " + deadDwell.status);
+  assert.strictEqual(deadDwell.body.error, "reservation_void", "a voided row must report reservation_void from dwell too");
+  assert.strictEqual((await dwell({ token: orphan, visibleMs: 100, focusedMs: 100 })).status, 404, "dwell on an unknown jti must 404");
+  const stolenDwell = await dwell({ token: mint(forgeA.userId), visibleMs: 100, focusedMs: 100 });
+  assert.strictEqual(stolenDwell.status, 403, "dwell with another user's token must 403, got " + stolenDwell.status);
+  assert.strictEqual(stolenDwell.body.error, "token_user_mismatch", "a cross-user dwell must report token_user_mismatch");
+  assert.strictEqual((await dwell({ token: "garbage", visibleMs: 1, focusedMs: 1 })).body.error, "invalid_impression_token",
+    "dwell must verify the token before it trusts anything in the body");
+
+  // ── a .vsix already in the wild: mint -> POST /v1/impressions, no dwell ────
+  // ~9 published builds have never heard of a reservation or a dwell report. The
+  // whole point of keeping the transition on the existing endpoint is that they
+  // keep earning, unchanged, with no client update.
+  db.exec("UPDATE sponsors SET active = 0");
+  sponsor("sponsor-legacy", { payout_paise: 25, bid_paise: 42 });
+  const legacy = await newUser(IP_LIFE);
+  const legacyLine = await line(legacy, "?taskType=npm", IP_LIFE);
+  assert.deepStrictEqual(Object.keys(legacyLine.body).sort(),
+    ["advertiser", "id", "impressionToken", "logoUrl", "payoutPaise", "text", "url"],
+    "the /v1/sponsor-line response shape must not change — shipped clients parse it: " + JSON.stringify(legacyLine.body));
+  const legacyImp = await api("POST", "/v1/impressions", { token: legacyLine.body.impressionToken, taskType: "npm" }, legacy.token, IP_LIFE);
+  assert.deepStrictEqual(legacyImp.body, { ok: true }, "the /v1/impressions response shape must not change either");
+  const legacyEarned = await earnings(legacy, IP_LIFE);
+  assert.strictEqual(legacyEarned.totalPaise, 25, "a legacy client that never reports dwell must still earn the full payout");
+  assert.strictEqual(legacyEarned.impressionCount, 1, "a legacy client's impression must count exactly once");
+  // Phase 4 changed what "available" means, and only that: the payout is credited
+  // in full at render (totalPaise, which shipped builds display, does not move),
+  // but it is PENDING until settlement judges it. Withdrawing money whose
+  // impression has not settled is the hole this closes.
+  assert.strictEqual(legacyEarned.pendingPaise, 25, "a rendered impression must read as pending");
+  assert.strictEqual(legacyEarned.settledPaise, 0, "nothing settles before the sweeper has run");
+  assert.strictEqual(legacyEarned.availablePaise, 0, "unsettled money must not be withdrawable");
+  assert.strictEqual(legacyEarned.totalPaise, legacyEarned.pendingPaise + legacyEarned.settledPaise,
+    "the ledger must split exactly: totalPaise = pendingPaise + settledPaise");
+  const legacyRow = rowFor(legacyLine.body.impressionToken);
+  assert.strictEqual(legacyRow.visible_ms, 0, "no dwell report means no dwell — not a blocked payout");
+  assert.strictEqual(legacyRow.task_type, "npm", "task_type must survive the mint -> render transition");
+  assert.strictEqual(legacyRow.billable, 1, "the legacy flow must end billable");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Phase 4/5: the settlement sweeper, the admin-editable threshold, the ledger
+  // split, and the advertiser report. Nothing here waits on the 60s timer —
+  // runSettlement() is called directly, which is why it is exported.
+  // ══════════════════════════════════════════════════════════════════════════
+  const { runSettlement } = app;
+  const NOW = () => Math.floor(Date.now() / 1000);
+  const OLD = 200;  // seconds — comfortably past DWELL_WINDOW_MS (120s) + the 30s grace
+  const seedImp = db.prepare(
+    `INSERT INTO impressions (user_id, sponsor_id, payout_paise, bid_paise, state, billable, rendered_at, visible_ms, focused_ms, ts, threshold_ms)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+  );
+  // Rows are seeded straight into a state rather than driven through HTTP: the
+  // sweeper's contract is "state + timestamps", so that is exactly what a test of
+  // it should control. The HTTP path into those states is covered above.
+  const imp = (userId, sponsorId, over = {}) => {
+    const d = { payout: 25, bid: 42, state: "rendered", billable: 1, renderedAgo: 0,
+                visible: 0, focused: 0, tsAgo: 0, threshold: null, ...over };
+    seedImp.run(userId, sponsorId, d.payout, d.bid, d.state, d.billable,
+                d.state === "reserved" ? null : NOW() - d.renderedAgo,
+                d.visible, d.focused, NOW() - d.tsAgo, d.threshold);
+    return db.prepare("SELECT MAX(id) AS id FROM impressions").get().id;
+  };
+  const row = (id) => db.prepare("SELECT * FROM impressions WHERE id = ?").get(id);
+
+  // ── the threshold is a setting, not a constant ────────────────────────────
+  const settings0 = await api("GET", "/api/settings");
+  assert.strictEqual(settings0.status, 200, "GET /api/settings must be readable by admin");
+  assert.strictEqual(settings0.body.viewabilityMs, 5000, "the seeded viewability threshold must be 5000ms, not the old 8000");
+  assert.strictEqual(settings0.body.dwellWindowMs, DWELL_WINDOW_MS, "settings must report the live dwell window");
+  assert.strictEqual(settings0.body.reservationTtlMs, 90000, "settings must report the reservation TTL");
+
+  for (const [label, body] of [
+    ["below the floor", { viewabilityMs: 999 }],
+    ["above the ceiling", { viewabilityMs: 60001 }],
+    ["not an integer", { viewabilityMs: 5000.5 }],
+    ["a string", { viewabilityMs: "5000" }],
+    ["missing", {}],
+    ["null", { viewabilityMs: null }],
+  ]) {
+    const bad = await api("PUT", "/api/settings", body);
+    assert.strictEqual(bad.status, 400, `a viewability threshold ${label} must 400, got ${bad.status}`);
+    assert.strictEqual(bad.body.error, "invalid_viewability_ms", `a threshold ${label} must report invalid_viewability_ms`);
+  }
+  assert.strictEqual((await api("GET", "/api/settings")).body.viewabilityMs, 5000, "a rejected edit must not have changed anything");
+
+  const setThreshold = async (ms) => {
+    const r = await api("PUT", "/api/settings", { viewabilityMs: ms });
+    assert.deepStrictEqual(r.body, { ok: true, viewabilityMs: ms }, "PUT /api/settings must echo the new threshold");
+    return r;
+  };
+  await setThreshold(1000);
+  assert.strictEqual((await api("GET", "/api/settings")).body.viewabilityMs, 1000, "the floor value must be accepted and stored");
+  await setThreshold(60000);
+  assert.strictEqual((await api("GET", "/api/settings")).body.viewabilityMs, 60000, "the ceiling value must be accepted and stored");
+  await setThreshold(5000);
+
+  const noKeySettings = await fetch(base + "/api/settings");
+  assert.strictEqual(noKeySettings.status, 401, "reading the threshold without the admin key must 401");
+  const noKeyPut = await fetch(base + "/api/settings", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ viewabilityMs: 30000 }),
+  });
+  assert.strictEqual(noKeyPut.status, 401, "editing the threshold without the admin key must 401");
+  assert.strictEqual((await api("GET", "/api/settings")).body.viewabilityMs, 5000, "an unauthorised edit must not land");
+
+  // ── every transition, once each ───────────────────────────────────────────
+  db.exec("UPDATE sponsors SET active = 0");
+  sponsor("sponsor-settle", { payout_paise: 25, bid_paise: 42 });
+  const setUser = await newUser(IP.settle);
+  const freshReservation = imp(setUser.userId, "sponsor-settle", { state: "reserved", billable: 0 });
+  const staleReservation = imp(setUser.userId, "sponsor-settle", { state: "reserved", billable: 0, tsAgo: OLD });
+  const met      = imp(setUser.userId, "sponsor-settle", { visible: 6000, focused: 6000 });
+  const short    = imp(setUser.userId, "sponsor-settle", { visible: 1000, focused: 1000 });
+  const noReport = imp(setUser.userId, "sponsor-settle", { visible: 0, focused: 0 });
+
+  const pass1 = runSettlement();
+  assert.strictEqual(pass1.thresholdMs, 5000, "settlement must judge with the live threshold from the settings table");
+  assert.strictEqual(row(freshReservation).state, "reserved", "a reservation inside its TTL must survive the sweep");
+  assert.strictEqual(row(staleReservation).state, "void", "a reservation past RESERVATION_TTL_MS must be voided");
+  assert.strictEqual(row(met).state, "viewable", "dwell at or over the threshold must promote to viewable immediately");
+  assert.strictEqual(row(met).threshold_ms, 5000, "a judged row must record the threshold it was judged under");
+  assert.strictEqual(row(met).settled_at, null, "a row still inside its dwell window must not settle yet");
+  assert.strictEqual(row(short).state, "rendered", "a short row inside its dwell window is not done yet — more dwell may still arrive");
+  assert.strictEqual(row(noReport).state, "rendered", "an unreported row inside its dwell window must be left alone too");
+
+  // Close the evidence window on all three rendered rows and sweep again.
+  db.prepare("UPDATE impressions SET rendered_at = rendered_at - ? WHERE id IN (?,?,?)").run(OLD, met, short, noReport);
+  const pass2 = runSettlement();
+  assert.strictEqual(row(met).state, "settled", "a viewable row must settle once its dwell window has closed");
+  assert.ok(row(met).settled_at > 0, "settlement must stamp settled_at");
+  assert.strictEqual(row(met).billable, 1, "a settled impression must stay billable");
+  assert.strictEqual(row(short).state, "void", "a row that never met the threshold must void once its window closes");
+  assert.strictEqual(row(short).billable, 0, "a voided impression must stop being billable — it can never be paid");
+  assert.strictEqual(row(short).threshold_ms, 5000, "a voided-for-short-dwell row must record what it was judged against");
+  // The shipped .vsix builds that predate the dwell endpoint live or die here.
+  assert.strictEqual(row(noReport).state, "settled", "a row with NO dwell report is a legacy client, not a short glance — it must be paid");
+  assert.strictEqual(row(noReport).threshold_ms, null, "an unjudged row must not be stamped with a threshold it was never measured against");
+  assert.ok(pass2.settled >= 1 && pass2.voided >= 1 && pass2.unmeasured >= 1, "the sweep must report what it moved: " + JSON.stringify(pass2));
+
+  // ── idempotency + restart-safety ──────────────────────────────────────────
+  // Nothing here is driven by a cursor or a "last run" marker, so a second pass
+  // (or a process that died halfway through the first) must be a no-op.
+  const snapshot = () => db.prepare(
+    "SELECT id, state, billable, threshold_ms, settled_at, visible_ms FROM impressions ORDER BY id"
+  ).all();
+  const settledOnce = snapshot();
+  const pass3 = runSettlement();
+  assert.deepStrictEqual({ ...pass3, thresholdMs: 0 }, { thresholdMs: 0, expired: 0, viewable: 0, voided: 0, unmeasured: 0, settled: 0 },
+    "a second settlement pass must change nothing: " + JSON.stringify(pass3));
+  runSettlement();
+  assert.deepStrictEqual(snapshot(), settledOnce, "repeated settlement passes must be byte-identical — the sweeper is not idempotent");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // THE AUDIT RULE. The threshold is editable at runtime, so it can move under
+  // rows that have already been priced. A judged row is NEVER re-judged:
+  // lowering the threshold must not resurrect voided impressions, raising it
+  // must not claw back money already settled. Without this, every edit silently
+  // re-prices history and the advertiser report stops being reproducible.
+  // ══════════════════════════════════════════════════════════════════════════
+  const auditPaid = imp(setUser.userId, "sponsor-settle", { visible: 6000, focused: 6000, renderedAgo: OLD });
+  const auditVoid = imp(setUser.userId, "sponsor-settle", { visible: 3000, focused: 3000, renderedAgo: OLD });
+  runSettlement();
+  assert.strictEqual(row(auditPaid).state, "settled", "6s of dwell at a 5s threshold must settle");
+  assert.strictEqual(row(auditVoid).state, "void", "3s of dwell at a 5s threshold must void");
+  const paidBefore = row(auditPaid), voidBefore = row(auditVoid);
+
+  await setThreshold(15000);
+  assert.strictEqual(runSettlement().thresholdMs, 15000, "settlement must pick up an admin edit with no restart — the value cannot be cached at boot");
+  runSettlement();
+  assert.deepStrictEqual(row(auditPaid), paidBefore, "raising the threshold must not claw back an already-settled impression");
+  assert.strictEqual(row(auditPaid).threshold_ms, 5000, "a settled row must keep the threshold it was actually judged under");
+  assert.deepStrictEqual(row(auditVoid), voidBefore, "lowering/raising the threshold must not re-judge a voided impression");
+  assert.strictEqual(row(auditVoid).threshold_ms, 5000, "a voided row must keep its original threshold stamp");
+
+  // ...but the new number governs everything judged from now on.
+  const auditAfter = imp(setUser.userId, "sponsor-settle", { visible: 6000, focused: 6000, renderedAgo: OLD });
+  runSettlement();
+  assert.strictEqual(row(auditAfter).state, "void", "6s of dwell at a 15s threshold must void — the edit governs rows not yet judged");
+  assert.strictEqual(row(auditAfter).threshold_ms, 15000, "a row judged after the edit must carry the new threshold");
+  await setThreshold(5000);
+  runSettlement();
+  assert.strictEqual(row(auditAfter).state, "void", "dropping the threshold back must not resurrect what it already voided");
+
+  // ── the unknown_sponsor hole: a paused advertiser leaves a live reservation ──
+  db.exec("UPDATE sponsors SET active = 0");
+  sponsor("sponsor-paused", { payout_paise: 25, bid_paise: 42 });
+  const pausedUser = await newUser(IP.settle);
+  const strandedLine = await line(pausedUser, "?taskType=npm", IP.settle);
+  assert.strictEqual(strandedLine.body.id, "sponsor-paused", "setup: the paused-sponsor block must serve its own sponsor");
+  db.prepare("UPDATE sponsors SET active = 0 WHERE id = 'sponsor-paused'").run();   // advertiser paused mid-flight
+  const refused = await api("POST", "/v1/impressions", { token: strandedLine.body.impressionToken }, pausedUser.token, IP.settle);
+  assert.strictEqual(refused.body.error, "unknown_sponsor", "an impression for a paused sponsor must be refused");
+  const stranded = db.prepare("SELECT id FROM impressions WHERE jti = ?").get(jwt.decode(strandedLine.body.impressionToken).jti).id;
+  assert.strictEqual(row(stranded).state, "reserved", "the refusal leaves the row reserved — it holds the advertiser's budget until swept");
+  db.prepare("UPDATE impressions SET ts = ts - ? WHERE id = ?").run(OLD, stranded);
+  runSettlement();
+  assert.strictEqual(row(stranded).state, "void", "a reservation stranded by unknown_sponsor must be swept, releasing the budget hold");
+
+  // ── the ledger split, and the withdrawal gate that rides on it ────────────
+  db.exec("UPDATE sponsors SET active = 0");
+  sponsor("sponsor-ledger", { payout_paise: 25, bid_paise: 42 });
+  const led = await newUser(IP.settle);
+  const ledPending = imp(led.userId, "sponsor-ledger", { payout: 6000, visible: 9000, focused: 9000 });
+  imp(led.userId, "sponsor-ledger", { payout: 100, state: "settled" });
+  imp(led.userId, "sponsor-ledger", { payout: 999, state: "void", billable: 0 });
+  imp(led.userId, "sponsor-ledger", { payout: 777, state: "reserved", billable: 0 });
+
+  const ledE = async () => (await api("GET", "/v1/earnings", undefined, led.token, IP.settle)).body;
+  const e1 = await ledE();
+  assert.strictEqual(e1.totalPaise, 6100, "totalPaise must still be every billable paise, whatever state it is in");
+  assert.strictEqual(e1.pendingPaise, 6000, "money in rendered/viewable is pending");
+  assert.strictEqual(e1.settledPaise, 100, "only settled rows count as settled");
+  assert.strictEqual(e1.availablePaise, 100, "available must be settled minus withdrawn, not total minus withdrawn");
+  assert.strictEqual(e1.totalPaise, e1.pendingPaise + e1.settledPaise, "the split must be exhaustive: nothing billable may fall outside it");
+
+  await api("PUT", "/v1/profile/upi", { upiId: "led@upi" }, led.token, IP.settle);
+  db.prepare("UPDATE users SET upi_updated_at = unixepoch() - 90000 WHERE id = ?").run(led.userId);
+  const tooEarly = await api("POST", "/v1/withdraw", undefined, led.token, IP.settle);
+  assert.strictEqual(tooEarly.status, 400, "₹60 of unsettled earnings must not be withdrawable");
+  assert.strictEqual(tooEarly.body.error, "insufficient_balance", "an unsettled balance must read as insufficient, not as a payout");
+  assert.strictEqual(tooEarly.body.available, 100, "the refusal must quote the settled balance, not the pending one");
+
+  db.prepare("UPDATE impressions SET rendered_at = rendered_at - ? WHERE id = ?").run(OLD, ledPending);
+  runSettlement();
+  assert.strictEqual(row(ledPending).state, "settled", "9s of dwell at a 5s threshold must settle once the window closes");
+  const e2 = await ledE();
+  assert.strictEqual(e2.totalPaise, 6100, "settlement must not move totalPaise — it only moves money between pending and settled");
+  assert.strictEqual(e2.pendingPaise, 0, "nothing may be left pending after the window closes");
+  assert.strictEqual(e2.settledPaise, 6100, "settled must absorb exactly what pending gave up");
+  assert.strictEqual(e2.availablePaise, 6100, "settled money is withdrawable");
+  const paid = await api("POST", "/v1/withdraw", undefined, led.token, IP.settle);
+  assert.strictEqual(paid.status, 200, "a settled balance must be withdrawable: " + JSON.stringify(paid.body));
+  assert.strictEqual(paid.body.amountPaise, 6100, "the payout must be the settled balance");
+  assert.strictEqual((await ledE()).availablePaise, 0, "a requested withdrawal must consume the settled balance");
+
+  // The legacy client from the block above: paid in full, once it settles.
+  db.prepare("UPDATE impressions SET rendered_at = rendered_at - ? WHERE user_id = ? AND state = 'rendered'").run(OLD, legacy.userId);
+  runSettlement();
+  const legacySettled = await earnings(legacy, IP_LIFE);
+  assert.strictEqual(legacySettled.totalPaise, 25, "a legacy client's lifetime earnings must not move through settlement");
+  assert.strictEqual(legacySettled.availablePaise, 25, "a legacy client's money must become withdrawable once it settles");
+
+  // ── advertiser report ─────────────────────────────────────────────────────
+  // A fixed distribution on a sponsor of its own, so every number below is
+  // hand-checkable. sponsorId scopes the report, which also keeps other blocks'
+  // rows out of these assertions.
+  db.exec("UPDATE sponsors SET active = 0");
+  sponsor("sponsor-report", { payout_paise: 25, bid_paise: 42, budget_paise_daily: 50000, budget_paise_total: 900000 });
+  const rep = await newUser(IP.settle);
+  imp(rep.userId, "sponsor-report", { state: "settled", visible: 20000, threshold: 5000 });
+  imp(rep.userId, "sponsor-report", { state: "settled", visible: 9000,  threshold: 5000 });
+  imp(rep.userId, "sponsor-report", { state: "viewable", visible: 6000, threshold: 5000 });
+  imp(rep.userId, "sponsor-report", { state: "rendered", visible: 3000 });
+  imp(rep.userId, "sponsor-report", { state: "void", billable: 0, visible: 1000, threshold: 5000 });
+  imp(rep.userId, "sponsor-report", { state: "reserved", billable: 0 });
+  const stale = imp(rep.userId, "sponsor-report", { state: "settled", visible: 20000, threshold: 5000, tsAgo: 30 * 86400 });
+  db.prepare("INSERT INTO clicks (user_id, sponsor_id) VALUES (?,?)").run(rep.userId, "sponsor-report");
+
+  const report = await api("GET", "/api/report?days=7&sponsorId=sponsor-report");
+  assert.strictEqual(report.status, 200, "GET /api/report must answer: " + JSON.stringify(report.body));
+  assert.strictEqual(report.body.days, 7, "the report must echo the window it used");
+  assert.strictEqual(report.body.thresholdMs, 5000, "the report must state the threshold in force");
+  assert.strictEqual(report.body.sponsors.length, 1, "a sponsorId filter must return exactly that sponsor");
+  const r = report.body.sponsors[0];
+  assert.deepStrictEqual(Object.keys(r).sort(), [
+    "billable", "budgetDailyPaise", "budgetTotalPaise", "clicks", "ctr", "dwellP50Ms", "dwellP90Ms",
+    "histogram", "id", "name", "rendered", "served", "settled", "spendPaise", "unmeasured", "viewabilityRate", "viewable",
+  ], "the advertiser report shape must not drift: " + JSON.stringify(Object.keys(r)));
+  assert.strictEqual(r.served, 6, "served counts every row minted in the window (the 30-day-old one is out of range)");
+  assert.strictEqual(r.rendered, 4, "rendered counts everything that ever reached the screen: rendered + viewable + settled");
+  assert.strictEqual(r.viewable, 1, "viewable is a current state, not a cumulative one");
+  assert.strictEqual(r.settled, 2, "settled is a current state too");
+  assert.strictEqual(r.billable, 4, "void and reserved rows are not billable");
+  assert.strictEqual(r.viewabilityRate, 0.75, "viewabilityRate must be (viewable + settled) / rendered = 3/4");
+  assert.strictEqual(r.unmeasured, 0, "no row in this fixture settled without evidence");
+  assert.deepStrictEqual(r.histogram, { "0-2": 0, "2-5": 1, "5-8": 1, "8-15": 1, "15+": 1 },
+    "histogram buckets are seconds of visible_ms over rendered inventory: " + JSON.stringify(r.histogram));
+  assert.strictEqual(r.dwellP50Ms, 6000, "p50 of [3000, 6000, 9000, 20000] picked by offset is 6000");
+  assert.strictEqual(r.dwellP90Ms, 9000, "p90 of [3000, 6000, 9000, 20000] picked by offset is 9000");
+  assert.strictEqual(r.clicks, 1, "clicks must be counted in the same window");
+  assert.strictEqual(r.ctr, 0.25, "ctr is clicks / rendered");
+  assert.strictEqual(r.spendPaise, 5 * 42, "spend is bid-denominated over every non-void row, reservations included");
+  assert.strictEqual(r.budgetDailyPaise, 50000, "the report must expose the campaign's daily cap");
+  assert.strictEqual(r.budgetTotalPaise, 900000, "the report must expose the campaign's lifetime cap");
+  assert.strictEqual(report.body.mixedThresholds, false, "one threshold across the range must not raise the mixed flag");
+
+  // Everything in this fixture was judged at 5000 except one row we now re-stamp:
+  // a report spanning a threshold change has to say so, or the numbers read as
+  // one consistent measurement when they are two.
+  db.prepare("UPDATE impressions SET threshold_ms = 15000 WHERE id = ?").run(stale);
+  assert.strictEqual((await api("GET", "/api/report?days=7&sponsorId=sponsor-report")).body.mixedThresholds, false,
+    "a differing threshold OUTSIDE the window must not raise the flag");
+  assert.strictEqual((await api("GET", "/api/report?days=60&sponsorId=sponsor-report")).body.mixedThresholds, true,
+    "a range spanning two thresholds must be flagged as mixed");
+  const wide = (await api("GET", "/api/report?days=60&sponsorId=sponsor-report")).body.sponsors[0];
+  assert.strictEqual(wide.served, 7, "a wider window must pick up the older row");
+  assert.strictEqual(wide.settled, 3, "the older row is settled, so the settled count must grow with the window");
+
+  assert.strictEqual((await api("GET", "/api/report?days=nonsense&sponsorId=sponsor-report")).body.days, 7, "an unparseable days must fall back to 7");
+  assert.strictEqual((await api("GET", "/api/report?days=0")).body.days, 1, "days must clamp to at least 1");
+  assert.strictEqual((await api("GET", "/api/report?days=9999")).body.days, 90, "days must clamp to the 90-day ceiling");
+  assert.ok((await api("GET", "/api/report")).body.sponsors.length > 1, "an unfiltered report must cover every sponsor");
+  const unknownSponsor = await api("GET", "/api/report?sponsorId=sponsor-does-not-exist");
+  assert.deepStrictEqual(unknownSponsor.body.sponsors, [], "an unknown sponsorId must report nothing, not everything");
+  assert.strictEqual((await fetch(base + "/api/report")).status, 401, "the advertiser report must never be readable without the admin key");
+
+  // No per-user anything, ever: the report is what gets forwarded to an
+  // advertiser, and it must not carry a dev's identity out of the building.
+  assert.ok(!JSON.stringify(report.body).includes(rep.userId), "the report must never leak a user id");
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // REGRESSION: a schema migration must never move a user's balance.
+  // db.js runs its migrations on every boot, and two of them are UPDATE passes
+  // over `impressions` (the payout_paise / bid_paise backfills) — i.e. the file
+  // already contains the exact shape of change that could silently re-price
+  // history. This block seeds a user with a known ledger, boots db.js again in a
+  // child process against the same file (a real second startup, all migrations
+  // and backfills), and re-reads the balance over HTTP. If any migration ever
+  // touches money, this fails and names the delta.
+  // ══════════════════════════════════════════════════════════════════════════
+  const ledger = await newUser(IP.money);
+  const seedRows = [
+    ["sponsor-cap", "npm", 25, 42],
+    ["sponsor-cap", "gradle", 60, 100],
+    ["sponsor-gone-forever", null, 13, 42],   // sponsor row deleted: the backfills must leave it alone
+    ["sponsor-cap", "docker", 0, 0],          // payout_paise = 0: exactly what the backfill's WHERE matches
+  ];
+  const seed = db.prepare("INSERT INTO impressions (user_id, sponsor_id, task_type, payout_paise, bid_paise) VALUES (?,?,?,?,?)");
+  db.transaction(() => { for (const r of seedRows) seed.run(ledger.userId, ...r); })();
+
+  const before = (await api("GET", "/v1/earnings", undefined, ledger.token, IP.money)).body;
+  assert.strictEqual(before.totalPaise, 98, "ledger fixture must total 25+60+13+0 paise");
+  assert.strictEqual(before.impressionCount, 4, "ledger fixture must be 4 impressions");
+
+  // Re-run every migration in db.js against this live database, from a cold
+  // process, exactly as a redeploy would.
+  execFileSync(process.execPath, ["-e", `require(${JSON.stringify(path.join(__dirname, "db.js"))}).close()`],
+    { env: { ...process.env, DB_PATH, NODE_ENV: "test" }, stdio: "ignore" });
+
+  const after = (await api("GET", "/v1/earnings", undefined, ledger.token, IP.money)).body;
+  assert.strictEqual(after.totalPaise, before.totalPaise,
+    `MIGRATION MOVED MONEY: totalPaise ${before.totalPaise} -> ${after.totalPaise}`);
+  assert.strictEqual(after.impressionCount, before.impressionCount,
+    `MIGRATION MOVED MONEY: impressionCount ${before.impressionCount} -> ${after.impressionCount}`);
+  assert.strictEqual(after.availablePaise, before.availablePaise,
+    `MIGRATION MOVED MONEY: availablePaise ${before.availablePaise} -> ${after.availablePaise}`);
+  // The tuned threshold is data, not config: db.js seeds `settings` from the env
+  // with INSERT OR IGNORE, so a stale VIEWABILITY_MS still set on the host cannot
+  // stomp an admin's tuning on the next redeploy. (5000 is the seed; the block
+  // above left it at 5000, so tune it away from the seed to make this mean something.)
+  await setThreshold(7000);
+  execFileSync(process.execPath, ["-e", `require(${JSON.stringify(path.join(__dirname, "db.js"))}).close()`],
+    { env: { ...process.env, DB_PATH, NODE_ENV: "test", VIEWABILITY_MS: "9000" }, stdio: "ignore" });
+  assert.strictEqual((await api("GET", "/api/settings")).body.viewabilityMs, 7000,
+    "a redeploy must not re-seed the threshold over an admin's tuned value");
+  await setThreshold(5000);
+
+  assert.deepStrictEqual(
+    db.prepare("SELECT payout_paise, bid_paise FROM impressions WHERE user_id = ? ORDER BY id").all(ledger.userId),
+    seedRows.map(([, , payout_paise, bid_paise]) => ({ payout_paise, bid_paise })),
+    "a migration rewrote per-row payout/bid on historic impressions",
+  );
+  // The lifecycle columns backfill history purely through their DEFAULTS: the
+  // instant they exist, every pre-existing row reads as already-earned and final.
+  // That is why no migration needs an UPDATE over this table — and an UPDATE here
+  // is exactly what the assertions above are standing guard against.
+  assert.deepStrictEqual(
+    db.prepare("SELECT DISTINCT state, billable FROM impressions WHERE user_id = ?").all(ledger.userId),
+    [{ state: "settled", billable: 1 }],
+    "rows predating the lifecycle columns must read as settled + billable, with no backfill pass",
+  );
+  db.prepare("DELETE FROM impressions WHERE user_id = ?").run(ledger.userId);
 
   console.log("test-api: all assertions passed");
 }

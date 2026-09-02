@@ -29,9 +29,11 @@ if (process.env.RSA_PRIVATE_KEY) {
 // needs RSA/JWT, so the key-loading block above stays.
 
 // Short-lived, single-use proof that a specific ad was served to a specific user.
-// jti is enforced unique at insert time so a token credits at most one impression.
-function signImpressionToken({ sponsorId, userId, payoutPaise, bidPaise }) {
-  return jwt.sign({ spn: sponsorId, pay: payoutPaise, bid: bidPaise, jti: randomUUID() }, privateKey, {
+// jti is the id of the `reserved` impressions row minted alongside this token, so
+// the caller passes one in: POST /v1/impressions looks the row up by it, and the
+// unique index on impressions.jti is the backstop against a replayed token.
+function signImpressionToken({ sponsorId, userId, payoutPaise, bidPaise, jti = randomUUID() }) {
+  return jwt.sign({ spn: sponsorId, pay: payoutPaise, bid: bidPaise, jti }, privateKey, {
     algorithm: "RS256",
     subject: userId,
     expiresIn: "90s",
