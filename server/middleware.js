@@ -48,11 +48,41 @@ function adminAuth(req, res, next) {
 
 // ── Impression-lifecycle config (shared with server/backend.js) ─────────────
 // Exported so the settlement sweeper reuses the same numbers rather than
-// re-deriving them. VIEWABILITY_MS is unused until that phase lands; it lives
-// here so "what counts as seen" has exactly one definition.
-const VIEWABILITY_MS     = Number(process.env.VIEWABILITY_MS     || 8_000);   // on-screen time before an impression counts as viewed
+// re-deriving them: "what counts as seen" has exactly one definition.
+//
+// VIEWABILITY_MS is a SEED, not the runtime source. The threshold is tuned from
+// real report data (GET /api/report), so it lives in the `settings` table and is
+// edited from the admin panel — an env constant would need a redeploy to move,
+// and a redeploy is exactly when nobody wants to touch the number that decides
+// what gets paid. getViewabilityMs() below is what settlement actually reads.
+const VIEWABILITY_MS     = Number(process.env.VIEWABILITY_MS     || 5_000);   // on-screen time before an impression counts as viewed
 const DWELL_WINDOW_MS    = Number(process.env.DWELL_WINDOW_MS    || 120_000); // hard ceiling on reportable dwell — a build can outlive any plausible glance
 const RESERVATION_TTL_MS = Number(process.env.RESERVATION_TTL_MS || 90_000);  // must match the impression token's 90s expiry (server/auth.js)
+
+// Bounds, not taste: below ~1s no client can report dwell fast enough for the
+// number to mean anything, and above a minute the dwell window (120s) stops
+// leaving room for evidence to arrive.
+const VIEWABILITY_MIN_MS = 1_000;
+const VIEWABILITY_MAX_MS = 60_000;
+
+// Read on EVERY settlement pass, never cached at module load: a cached value
+// would mean an admin edit does nothing until the next redeploy, which is the
+// whole reason the number moved out of the env in the first place. One indexed
+// single-row read per pass (once a minute) is not worth a cache.
+function getViewabilityMs() {
+  const row = getDb().prepare("SELECT value FROM settings WHERE key = 'viewability_ms'").get();
+  const n = Number(row?.value);
+  // A missing/garbage row falls back to the seed rather than throwing — settlement
+  // must never stall on a bad settings row, and 5s is the documented default.
+  return Number.isInteger(n) && n >= VIEWABILITY_MIN_MS && n <= VIEWABILITY_MAX_MS ? n : VIEWABILITY_MS;
+}
+
+function setViewabilityMs(ms) {
+  getDb().prepare(
+    `INSERT INTO settings (key, value, updated_at) VALUES ('viewability_ms', ?, unixepoch())
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+  ).run(String(ms));
+}
 
 // Rupee ceiling per user per day. The row cap alone bounds *count*, not *money*:
 // /v1/sponsor-line returns payoutPaise in cleartext, so a scripted caller used to
@@ -135,4 +165,5 @@ module.exports = {
   requireAuth, adminAuth, rateLimitImpressions, rateLimitSponsorLine,
   globalRateLimit, authRateLimit, oauthRateLimit,
   VIEWABILITY_MS, DWELL_WINDOW_MS, RESERVATION_TTL_MS, DAILY_EARNINGS_PAISE_CAP,
+  getViewabilityMs, setViewabilityMs, VIEWABILITY_MIN_MS, VIEWABILITY_MAX_MS,
 };

@@ -208,5 +208,41 @@ const mkLine = (id) => ({ id, text: `ad ${id}`, payoutPaise: 25, impressionToken
   c.rot.stop();       // clears the short retry timer
   c.rot.cancelFlash();
 
+  // Retry backs off past the server's 25s mint floor. A mint that lands server-side
+  // but times out here leaves us 429-ed for the rest of that window; a flat 2s retry
+  // would spend it hammering a door we already know is shut.
+  const d = build(deadClient);
+  const realSetTimeout = global.setTimeout;
+  const delays = [];
+  global.setTimeout = (fn, ms) => { delays.push(ms); return realSetTimeout(() => {}, 0); };
+  try {
+    for (let i = 0; i < 6; i++) d.rot.rotate();
+  } finally {
+    global.setTimeout = realSetTimeout;
+  }
+  assert.deepStrictEqual(
+    delays,
+    [2_000, 4_000, 8_000, 16_000, 30_000, 30_000],
+    "cold-buffer retry doubles and caps at 30s, above the 25s MINT_FLOOR_SEC"
+  );
+  assert.ok(delays[4] > 25_000, "the backoff must clear the server's mint floor, not sit under it");
+
+  // An outage that ends must not leave the next cold buffer inheriting its ceiling.
+  const e = build(goodClient);
+  e.rot.rotate();                                  // empty buffer — escalates once
+  e.rot.buffer.refill();
+  await tick();
+  e.rot.rotate();                                  // a line lands — backoff resets
+  const delaysAfter = [];
+  global.setTimeout = (fn, ms) => { delaysAfter.push(ms); return realSetTimeout(() => {}, 0); };
+  try {
+    e.rot.rotate();                                // buffer empty again
+  } finally {
+    global.setTimeout = realSetTimeout;
+  }
+  assert.deepStrictEqual(delaysAfter, [2_000], "a successful render resets the backoff to its floor");
+  e.rot.stop();
+  e.rot.cancelFlash();
+
   console.log("test-adintegrity: all assertions passed");
 })().catch((e) => { console.error(e); process.exit(1); });

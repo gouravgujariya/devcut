@@ -194,6 +194,13 @@ function dashboardHtml(
   const available = earnings.availablePaise ?? earnings.totalPaise - withdrawn;
   const pending = earnings.pendingWithdrawal ?? history?.some((w) => w.status === "pending") ?? false;
 
+  // Newer backends split earnings into settled (= withdrawable, already in
+  // `available`) and pending (recorded, still being confirmed). Older backends
+  // send neither field, so this collapses back to today's single-total display
+  // rather than printing "Pending ₹NaN".
+  const pendingPaise = Number(earnings.pendingPaise);
+  const showPending = Number.isFinite(pendingPaise) && pendingPaise > 0;
+
   // Cashout limit logic — mirrors the server rules, shown to the user up front
   let blockReason = "";
   if (pending) blockReason = "A withdrawal is already being processed — payouts arrive within 7 days.";
@@ -225,6 +232,8 @@ function dashboardHtml(
       <div class="muted">Available to withdraw</div>
       <div class="balance">${rupees(available)}</div>
       ${available < min ? `<div class="bar"><div style="width:${pct}%"></div></div>` : ""}
+      ${showPending ? `<div style="margin-top:6px"><span class="pill pending">+ ${rupees(pendingPaise)} pending</span></div>
+      <p class="muted">Pending is money you've earned that we're still confirming — it isn't missing, and it moves into Available on its own once it clears.</p>` : ""}
       <p class="muted">${blockReason || "You can cash out now. Payouts are sent to your UPI within 7 days."}</p>
       <div class="row">
         <button ${canWithdraw ? "" : "disabled"} onclick="vscode.postMessage({command:'withdraw'})">Withdraw to UPI</button>

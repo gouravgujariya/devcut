@@ -197,6 +197,35 @@ for (const sql of [
 // state within a time window; ts leads because every state is time-bounded.
 db.exec("CREATE INDEX IF NOT EXISTS idx_impressions_state_ts ON impressions(state, ts)");
 
+// THE AUDIT COLUMN. Stamped by the settlement sweeper with the viewability
+// threshold in force at the moment it judged this row, and never rewritten.
+//
+// Without it, an advertiser report is unreproducible: the threshold is now
+// admin-editable at runtime (see `settings` below), so "viewable" means whatever
+// the number happened to be when the row was judged. NULL means "never judged
+// against a threshold" — historic rows, and rows that settled with no dwell
+// evidence at all (see runSettlement in backend.js). Deliberately nullable, so no
+// backfill pass is needed and history is not retroactively assigned a threshold
+// it was never measured against.
+try { db.exec("ALTER TABLE impressions ADD COLUMN threshold_ms INTEGER"); } catch (_) {}
+
+// Runtime-editable settings (currently one row: viewability_ms). A table rather
+// than an env var because the viewability threshold is *tuned* from real report
+// data — an env constant can only move on a redeploy, and a redeploy is the worst
+// moment to be changing the number that decides what gets paid.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )
+`);
+// INSERT OR IGNORE: env is a SEED for a fresh DB only. Once the row exists the
+// admin owns it, so a stale VIEWABILITY_MS still set on the host cannot silently
+// stomp a tuned threshold on the next boot.
+db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('viewability_ms', ?)")
+  .run(String(Number(process.env.VIEWABILITY_MS) || 5000));
+
 // 24h withdrawal lock after a UPI change (see POST /v1/withdraw)
 try { db.exec("ALTER TABLE users ADD COLUMN upi_updated_at INTEGER"); } catch (_) {}
 

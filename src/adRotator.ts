@@ -9,8 +9,23 @@ import { DwellTracker } from "./dwellTracker";
  */
 const TOKEN_SAFE_MS = 75_000;
 
-/** Cold/stale buffer retry. Short so the FIRST line of a build isn't a whole rotation late. */
-const RETRY_MS = 2_000;
+/**
+ * Cold/stale buffer retry, backing off 2s → 4s → 8s … → 30s.
+ *
+ * The first retry is deliberately fast, because the common cause is a one-off
+ * Railway cold start and the FIRST line of a build shouldn't be a whole rotation late.
+ * The ceiling exists because the server paces MINTING (MINT_FLOOR_SEC, 25s by default):
+ * a mint that lands server-side but times out on our end leaves us 429-ed for the rest
+ * of that window, and a flat 2s retry would just spend it hammering a door we know is
+ * shut. Backing off past the floor means the retry that finally lands is the first one
+ * that could have.
+ *
+ * ponytail: blind backoff, not a `Retry-After` handshake — fetchCurrentLine() collapses
+ * every failure to `undefined`, so the client cannot currently tell 429 from offline.
+ * Plumb the status through and honour the header if the floor ever becomes dynamic.
+ */
+const RETRY_MIN_MS = 2_000;
+const RETRY_MAX_MS = 30_000;
 
 /**
  * Holds exactly ONE pre-authorised line so rotate() never awaits the network on the
@@ -71,6 +86,7 @@ export class AdRotator {
   private pendingShowTimer?: NodeJS.Timeout;
   private rotationInterval?: NodeJS.Timeout;
   private retryTimer?: NodeJS.Timeout;
+  private retryMs = RETRY_MIN_MS;
   private flashTimer?: NodeJS.Timeout;
   private currentLine?: SponsorLine;
   private dwell?: DwellTracker;
@@ -158,9 +174,14 @@ export class AdRotator {
       // cold start used to blank the status bar mid-build. Keep whatever is up and
       // try again shortly.
       this.buffer.refill();
-      this.retryTimer = setTimeout(() => this.rotate(), RETRY_MS);
+      this.retryTimer = setTimeout(() => this.rotate(), this.retryMs);
+      this.retryMs = Math.min(this.retryMs * 2, RETRY_MAX_MS);
       return;
     }
+
+    // A line in hand means the backoff did its job — the next cold buffer starts over
+    // at RETRY_MIN_MS rather than inheriting a ceiling from an outage that is over.
+    this.retryMs = RETRY_MIN_MS;
 
     this.flushDwell(); // close out the line being replaced
     this.currentLine = line;

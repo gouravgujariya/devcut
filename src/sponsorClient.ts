@@ -22,6 +22,10 @@ export interface EarningsSummary {
   availablePaise?: number;
   pendingWithdrawal?: boolean;
   minWithdrawPaise?: number;
+  /** Recorded but not settled yet — counted in totalPaise, not yet withdrawable. */
+  pendingPaise?: number;
+  /** Settled lifetime earnings, before withdrawals. */
+  settledPaise?: number;
 }
 
 export interface WithdrawalRecord {
