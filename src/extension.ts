@@ -295,10 +295,33 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("devcut.signOut", async () => {
+      await askExitFeedback(sponsorClient, "logout"); // needs the live session — ask before revoking it
       await sponsorClient.logout(); // best-effort server revoke — never throws
       await authStore.clearToken();
       vscode.window.showInformationMessage(
         "Signed out of DevCut. Run 'DevCut: Sign in with GitHub' or 'DevCut: Activate with Invite Code' when you want to start earning again."
+      );
+    })
+  );
+
+  // ── Delete account & data ───────────────────────────────────────────────────
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("devcut.deleteAccount", async () => {
+      const confirm = await vscode.window.showWarningMessage(
+        "Delete your DevCut account? This removes your personal data (email, UPI ID, company, country) and signs you out everywhere. This cannot be undone.",
+        { modal: true },
+        "Delete Account"
+      );
+      if (confirm !== "Delete Account") return;
+
+      await askExitFeedback(sponsorClient, "delete_account"); // needs the live session — ask before deleting it
+      const ok = await sponsorClient.deleteAccount();
+      await authStore.clearToken();
+      vscode.window.showInformationMessage(
+        ok
+          ? "Your DevCut account and personal data have been deleted."
+          : "DevCut: Could not reach the backend to delete your account, but you've been signed out locally. Try again later to fully delete your data."
       );
     })
   );
@@ -632,6 +655,31 @@ function bumpActivity(): void {
     idleRotator = new AdRotator(adBar, sessionBar, sponsorClient, earningsStore, config, undefined, true);
     idleRotator.start();
   }, minutes * 60_000);
+}
+
+// ── Exit feedback (sign-out / delete account) ───────────────────────────────
+
+// Quick, skippable NPS + free-text comment, asked while the session backing
+// the request is still live. Esc at either step just skips it — never blocks
+// the sign-out/delete flow the user actually asked for.
+async function askExitFeedback(client: SponsorClient, event: "logout" | "delete_account"): Promise<void> {
+  const pick = await vscode.window.showQuickPick(
+    Array.from({ length: 11 }, (_, n) => String(n)),
+    {
+      title: "How likely are you to recommend DevCut to another developer? (0-10, Esc to skip)",
+      placeHolder: "0 = not at all, 10 = extremely likely",
+      ignoreFocusOut: false,
+    }
+  );
+  const npsScore = pick !== undefined ? parseInt(pick, 10) : undefined;
+
+  const comment = await vscode.window.showInputBox({
+    title: event === "delete_account" ? "Why are you deleting your account? (optional, Esc to skip)" : "Anything we should know before you go? (optional, Esc to skip)",
+    ignoreFocusOut: false,
+  });
+
+  if (npsScore === undefined && !comment?.trim()) return;
+  await client.submitFeedback(event, npsScore, comment?.trim() || undefined);
 }
 
 // ── One-time profile survey ─────────────────────────────────────────────────

@@ -653,6 +653,23 @@ app.put("/v1/profile/upi", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /v1/feedback  — exit NPS/comment, submitted right before sign-out or
+// account deletion while the session is still valid. Best-effort on the client;
+// never blocks the sign-out/delete flow.
+app.post("/v1/feedback", requireAuth, (req, res) => {
+  const parse = z.object({
+    event:    z.enum(["logout", "delete_account"]),
+    npsScore: z.number().int().min(0).max(10).optional(),
+    comment:  z.string().max(2000).optional(),
+  }).safeParse(req.body);
+  if (!parse.success) return res.status(400).json({ error: "invalid body", details: parse.error.flatten() });
+
+  const { event, npsScore, comment } = parse.data;
+  db.prepare("INSERT INTO exit_feedback (user_id, event, nps_score, comment) VALUES (?, ?, ?, ?)")
+    .run(req.userId, event, npsScore ?? null, comment ?? null);
+  res.json({ ok: true });
+});
+
 // DELETE /v1/me  — account deletion: anonymise PII, keep money rows for accounting
 app.delete("/v1/me", requireAuth, (req, res) => {
   db.transaction(() => {

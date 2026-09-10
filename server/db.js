@@ -295,6 +295,21 @@ db.exec(`
   )
 `);
 
+// Exit feedback — captured on sign-out / account deletion, while the session
+// (and thus user_id) is still known. user_id is kept even through account
+// deletion (anonymisation only touches the users row) so churn feedback stays
+// attributable for as long as the row lives.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS exit_feedback (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    TEXT NOT NULL,
+    event      TEXT NOT NULL,
+    nps_score  INTEGER,
+    comment    TEXT,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch())
+  )
+`);
+
 // Funnel counters, keyed `<event>:<YYYY-MM-DD>` — a daily series without a row
 // per event. This DB lives on a Railway volume (see the DB_PATH warning above),
 // so aggregates only: nothing here is worth the write volume of raw events.

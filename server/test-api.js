@@ -672,6 +672,18 @@ async function main() {
     () => db.prepare("INSERT INTO withdrawals (user_id, amount_paise, upi_id) VALUES (?,?,?)").run(w2.userId, 100, "w2@upi"),
     /UNIQUE/, "a second pending withdrawal must be rejected by the partial unique index");
 
+  // ── exit feedback ──────────────────────────────────────────────────────────
+  const fbUser = await newUser(IP.life);
+  assert.deepStrictEqual(
+    (await api("POST", "/v1/feedback", { event: "logout", npsScore: 9, comment: "great tool" }, fbUser.token, IP.life)).body,
+    { ok: true });
+  const fbRow = db.prepare("SELECT event, nps_score, comment FROM exit_feedback WHERE user_id = ?").get(fbUser.userId);
+  assert.deepStrictEqual(fbRow, { event: "logout", nps_score: 9, comment: "great tool" }, "feedback must be persisted verbatim");
+  assert.strictEqual((await api("POST", "/v1/feedback", { event: "bogus" }, fbUser.token, IP.life)).status, 400,
+    "an unknown event must 400");
+  assert.strictEqual((await api("POST", "/v1/feedback", { event: "logout", npsScore: 11 }, fbUser.token, IP.life)).status, 400,
+    "npsScore out of 0-10 range must 400");
+
   // ── account deletion is final and total ───────────────────────────────────
   const gone = await newUser(IP.life);
   const goneSibling = await api("POST", "/v1/login", { inviteCode: gone.code }, undefined, IP.life);
