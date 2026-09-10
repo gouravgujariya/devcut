@@ -67,6 +67,10 @@
         "title": "DevCut: Sign Out"
       },
       {
+        "command": "devcut.deleteAccount",
+        "title": "DevCut: Delete My Account & Data"
+      },
+      {
         "command": "devcut.openWebsite",
         "title": "DevCut: Open Website / Get Invite Code"
       },

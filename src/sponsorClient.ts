@@ -111,6 +111,24 @@ export class SponsorClient {
     }
   }
 
+  /** Best-effort exit NPS/comment. Call before logout()/deleteAccount() — needs a live session. Never throws. */
+  async submitFeedback(event: "logout" | "delete_account", npsScore?: number, comment?: string): Promise<void> {
+    try {
+      await this.request("POST", "/v1/feedback", { event, npsScore, comment });
+    } catch {
+      // Best-effort fire-and-forget.
+    }
+  }
+
+  /** Account deletion: server anonymises PII and revokes all sessions. */
+  async deleteAccount(): Promise<boolean> {
+    try {
+      return !!(await this.request("DELETE", "/v1/me"));
+    } catch {
+      return false;
+    }
+  }
+
   /** `idle` asks the server for the lower-paying idle inventory. */
   async fetchCurrentLine(taskType?: string, idle?: boolean): Promise<SponsorLine | undefined> {
     const params = new URLSearchParams();
