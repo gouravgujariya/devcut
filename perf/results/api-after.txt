@@ -1,0 +1,8 @@
+sponsor-line (5 users): 27ms 5ms 4ms 4ms 4ms 
+sponsor-line -> impressions POST: 13ms
+me/analytics (cold, warm, warm): 291ms 4ms 4ms 
+me/analytics other user: 5ms
+public/stats (cold, warm, warm): 177ms 2ms 2ms 
+public/stats 3 concurrent: 3ms 3ms 5ms 
+/v1/me: 1ms
+GET / : 4ms  GET /shared.css: 2ms

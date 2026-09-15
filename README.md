@@ -25,7 +25,7 @@ Open the command palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run:
 DevCut: Open Website / Get Invite Code
 ```
 
-Or go directly to → **https://waitwage-production.up.railway.app/site/**
+Or go directly to → **https://www.devcut.co.in/**
 
 Fill in your name and email. You'll receive an email with your personal invite code — looks like `DCUT-XXXX-XXXX-XX`.
 
@@ -127,6 +127,6 @@ DevCut: Sign In (returning user)  →  enter your DCUT-XXXX-XXXX-XX code
 
 ## Support
 
-- **Get invite / sign up:** https://waitwage-production.up.railway.app/site/  
-- **Advertise:** https://waitwage-production.up.railway.app/site/advertisers.html  
+- **Get invite / sign up:** https://www.devcut.co.in/  
+- **Advertise:** https://www.devcut.co.in/advertisers  
 - **Email:** techsupport@devcut.co.in

@@ -30,6 +30,9 @@ function requireAuth(req, res, next) {
   if (row.status !== "active") return res.status(403).json({ error: "account_revoked" });
   req.userId = row.user_id;
   req.sessionId = row.session_id;
+  // Everything behind a session is per-user; never let a browser or shared cache
+  // hold it (the public aggregate at /v1/public/stats is the only cacheable /v1 GET).
+  res.setHeader("Cache-Control", "no-store");
   next();
 }
 

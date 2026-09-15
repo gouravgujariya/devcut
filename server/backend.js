@@ -172,14 +172,67 @@ const corsMw = (req, res, next) => {
   next();
 };
 
+// Baseline security headers on every response. No CSP: the landing pages rely on
+// inline <script>/<style>, so a real CSP needs those pages nonce'd first — not a
+// blind default-src that would just break them.
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  next();
+});
+
 app.use(express.json());
 
-// The public marketing site is what devcut.co.in must serve at "/". server/public/
-// holds exactly one file — the admin dashboard — so mounting it here put the admin
-// panel on the apex domain for every visitor. The admin is reachable at /admin only
-// (see the route near the bottom of this file); it is a single self-contained HTML
-// file, so it needs no static mount of its own.
-app.use(express.static(path.join(__dirname, "..", "landing")));
+// ─── Public site ──────────────────────────────────────────────────────────────
+//
+// SITE_URL is the one public origin search engines should know: it feeds the
+// canonical-host redirect, robots.txt and sitemap.xml below. The landing pages
+// carry the same origin in their <link rel="canonical"> / og:url tags, so a
+// domain change is this env var plus one sed over landing/*.html.
+// Default is the custom domain Railway already serves (www.devcut.co.in); the
+// apex devcut.co.in still points at a GoDaddy builder page — see perf/SEO-REPORT.md.
+const SITE_URL = (process.env.SITE_URL || "https://www.devcut.co.in").replace(/\/$/, "");
+const SITE_HOST = new URL(SITE_URL).host;
+
+// Canonical URL rules for the marketing pages — one redirect, not a chain:
+//   /site/x.html, /x.html, /x/  →  /x            /site/, /index.html  →  /
+// /site/ was the original mount and is still linked from the extension, old emails
+// and OAUTH_DEFAULT_NEXT, so it must keep working — as a 301, not a duplicate.
+// Only page GETs are touched: /v1, /api and /admin are consumed by the extension
+// and the admin panel, never by a crawler that should be steered.
+const PAGE_PATH_RE = /^\/(?!v1\/|api\/|admin(?:\/|$))/;
+app.use((req, res, next) => {
+  if ((req.method !== "GET" && req.method !== "HEAD") || !PAGE_PATH_RE.test(req.path)) return next();
+  let p = req.path;
+  if (p === "/site" || p.startsWith("/site/")) p = p.slice(5) || "/";
+  if (p.endsWith("/index.html")) p = p.slice(0, -"index.html".length);
+  else if (p.endsWith(".html")) p = p.slice(0, -".html".length);
+  if (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
+  if (p === "") p = "/";
+  // Railway's *.up.railway.app hostname is the deploy address, not the site: send
+  // crawlers and old links to SITE_HOST. Never triggers on localhost (dev / tests).
+  const host = req.hostname.endsWith(".up.railway.app") && req.hostname !== SITE_HOST ? SITE_URL : "";
+  if (host || p !== req.path) {
+    const q = req.originalUrl.slice(req.path.length); // keep ?query (fragments never reach the server)
+    return res.redirect(301, host + p + q);
+  }
+  next();
+});
+
+// HTML keeps express.static's default (max-age=0 + ETag revalidation) so an edit
+// reaches visitors on their next request. shared.css is render-blocking on every
+// subpage and was being revalidated on every navigation — one extra ~150ms round
+// trip from India per page. It is not fingerprinted, so a bounded 1h lifetime
+// rather than immutable: a CSS edit reaches returning visitors within the hour.
+// `extensions` is what makes /how-it-works serve landing/how-it-works.html.
+app.use(express.static(path.join(__dirname, "..", "landing"), {
+  extensions: ["html"],
+  setHeaders(res, filePath) {
+    if (!filePath.endsWith(".html")) res.setHeader("Cache-Control", "public, max-age=3600");
+  },
+}));
 
 // Funnel counters — see the `counters` table in db.js.
 const bumpCounterStmt = db.prepare(
@@ -204,20 +257,35 @@ function canSendEmail() {
   return false;
 }
 
-// Count .vsix downloads before express.static below blindly serves the file.
-// Must stay above the /site mount — Express matches layers in registration order.
-app.get("/site/devcut-latest.vsix", globalRateLimit, (req, res, next) => {
+// Count .vsix downloads. The file is no longer shipped from landing/ (the
+// Marketplace is the install path), so this is a counted 302 to the GitHub
+// release instead of a counted 404.
+app.get("/devcut-latest.vsix", globalRateLimit, (req, res) => {
   bumpCounter("vsix_download");
-  next();
+  res.redirect(302, "https://github.com/gouravgujariya/waitwage/releases/latest");
 });
 
-// Same landing pages also stay at /site/ — the OAuth redirect target
-// (OAUTH_DEFAULT_NEXT) and the .vsix download counter above both use that prefix,
-// as do any links already in the wild.
-app.use("/site", express.static(path.join(__dirname, "..", "landing")));
+// Indexable public pages, in the order they should be crawled. login/dashboard
+// are noindex, /admin is the admin panel, the policies are public but low-priority.
+const SITE_PAGES = [
+  ["/", "1.0"], ["/how-it-works", "0.9"], ["/earnings", "0.8"], ["/advertisers", "0.8"],
+  ["/terms", "0.3"], ["/privacy-policy", "0.3"], ["/refund-policy", "0.3"], ["/cookie-policy", "0.3"],
+];
+app.get("/robots.txt", (req, res) => {
+  res.type("text/plain").send(
+    `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /v1/\nDisallow: /admin\n\nSitemap: ${SITE_URL}/sitemap.xml\n`
+  );
+});
+app.get("/sitemap.xml", (req, res) => {
+  const urls = SITE_PAGES.map(([p, pr]) => `  <url><loc>${SITE_URL}${p}</loc><priority>${pr}</priority></url>`).join("\n");
+  res.type("application/xml").send(
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`
+  );
+});
 
 // ─── Public extension API (/v1/) ──────────────────────────────────────────────
 
+app.use(["/v1", "/api"], (req, res, next) => { res.setHeader("X-Robots-Tag", "noindex"); next(); });
 app.use("/v1", corsMw, globalRateLimit);
 
 // Opaque permanent session token: 256 bits, hex. Raw value is returned to the
@@ -462,7 +530,7 @@ app.post("/v1/auth/github", authRateLimit, async (req, res) => {
 // The extension gets a token from VS Code; a browser has no such provider, so the
 // dashboard needs a real OAuth App round-trip.
 
-const OAUTH_DEFAULT_NEXT = "/site/login.html";
+const OAUTH_DEFAULT_NEXT = "/login";
 
 // `next` becomes a redirect target with tokens attached — an attacker-supplied
 // "//evil.com" or "https://evil.com" would hand them the session. Site-relative only.
@@ -729,6 +797,25 @@ app.post("/v1/me/profile", requireAuth, (req, res) => {
 // is minted (state `reserved`), but it is not money until POST /v1/impressions
 // says the ad rendered — counting reservations here would show a dev earnings for
 // lines they never saw, and would move on nothing but a rotation timer.
+// Per-user lifetime totals (paise only — no ids), the input to the rank tile on
+// the dashboard. One full scan of impressions (~420ms at 200k rows, event-loop
+// blocking) that every dashboard load used to repeat; a rank 60s stale is
+// indistinguishable to the user. Nothing user-specific is cached: the caller's
+// own total is still read live and compared against this list.
+// ponytail: module-level memo; a proper cache layer is the upgrade if more
+// aggregates ever need one.
+let boardCache = { at: 0, totals: [] };
+function leaderboardTotals() {
+  if (Date.now() - boardCache.at > 60_000) {
+    boardCache = {
+      at: Date.now(),
+      totals: db.prepare("SELECT SUM(payout_paise) AS paise FROM impressions WHERE billable = 1 GROUP BY user_id")
+        .all().map(r => r.paise),
+    };
+  }
+  return boardCache.totals;
+}
+
 app.get("/v1/me/analytics", requireAuth, (req, res) => {
   const totals = db.prepare(
     `SELECT COALESCE(SUM(payout_paise), 0) AS total_paise, COUNT(*) AS impression_count, MIN(ts) AS first_ts
@@ -771,13 +858,12 @@ app.get("/v1/me/analytics", requireAuth, (req, res) => {
      WHERE i.user_id = ? AND i.billable = 1 GROUP BY i.sponsor_id ORDER BY paise DESC`
   ).all(req.userId);
 
-  // Rank among earning devs; a dev with nothing yet counts as one extra entrant
-  const earners = db.prepare("SELECT COUNT(DISTINCT user_id) AS n FROM impressions WHERE billable = 1").get().n;
-  const ahead = db.prepare(
-    `SELECT COUNT(*) AS n FROM (
-       SELECT user_id FROM impressions WHERE billable = 1 GROUP BY user_id HAVING SUM(payout_paise) > ?
-     )`
-  ).get(totals.total_paise).n;
+  // Rank among earning devs; a dev with nothing yet counts as one extra entrant.
+  // The leaderboard is one full scan of impressions shared by every dashboard
+  // load, so it is computed at most once a minute — see leaderboardTotals().
+  const board = leaderboardTotals();
+  const earners = board.length;
+  const ahead = board.filter(p => p > totals.total_paise).length;
 
   res.json({
     totalPaise: totals.total_paise,
@@ -848,7 +934,12 @@ app.get("/v1/sponsor-line", requireAuth, rateLimitSponsorLine, (req, res) => {
   if (allSponsors.length === 0) return res.json(null);
 
   const todaySpend = spendBySponsor(true);
-  const totalSpend = spendBySponsor(false);
+  // Lifetime spend is a full-table scan (~110ms at 200k rows, and it grows forever)
+  // that only matters when a sponsor has a lifetime cap. No live sponsor does today,
+  // so the mint path — the hottest endpoint, and one that blocks the event loop —
+  // skips it unless one is set.
+  const anyLifetimeCap = allSponsors.some(s => s.budget_paise_total != null);
+  const totalSpend = anyLifetimeCap ? spendBySponsor(false) : {};
 
   // Filter out sponsors that have exceeded their daily or lifetime budget
   let eligible = allSponsors.filter(s => {
@@ -906,15 +997,21 @@ app.get("/v1/sponsor-line", requireAuth, rateLimitSponsorLine, (req, res) => {
     // never coexist, so they must never both count against the cap.
     db.prepare("UPDATE impressions SET state = 'void' WHERE user_id = ? AND state = 'reserved'").run(req.userId);
 
-    const spend = db.prepare(
-      `SELECT COALESCE(SUM(bid_paise), 0) AS total,
-              COALESCE(SUM(CASE WHEN ts > unixepoch('now', 'start of day') THEN bid_paise END), 0) AS today
-       FROM impressions WHERE sponsor_id = ? AND state != 'void'`
-    ).get(sponsor.id);
+    // Today's spend is a ts-range read (idx_impressions_ts); the lifetime sum walks
+    // every row this sponsor ever served, so it is only computed for a lifetime cap.
+    const spendToday = db.prepare(
+      `SELECT COALESCE(SUM(bid_paise), 0) AS today FROM impressions
+       WHERE sponsor_id = ? AND state != 'void' AND ts > unixepoch('now', 'start of day')`
+    ).get(sponsor.id).today;
     // Throw, don't return: this rolls the void back, so a user who cannot be given
     // a new line keeps the one they already hold.
-    if (spend.today + sponsor.bid_paise > effectiveDailyBudget(sponsor)) throw NO_BUDGET;
-    if (sponsor.budget_paise_total != null && spend.total + sponsor.bid_paise > sponsor.budget_paise_total) throw NO_BUDGET;
+    if (spendToday + sponsor.bid_paise > effectiveDailyBudget(sponsor)) throw NO_BUDGET;
+    if (sponsor.budget_paise_total != null) {
+      const spendTotal = db.prepare(
+        "SELECT COALESCE(SUM(bid_paise), 0) AS total FROM impressions WHERE sponsor_id = ? AND state != 'void'"
+      ).get(sponsor.id).total;
+      if (spendTotal + sponsor.bid_paise > sponsor.budget_paise_total) throw NO_BUDGET;
+    }
 
     db.prepare(
       `INSERT INTO impressions (user_id, sponsor_id, task_type, ip, payout_paise, bid_paise, jti, state, billable)
@@ -992,13 +1089,17 @@ app.post("/v1/impressions", requireAuth, rateLimitImpressions, (req, res) => {
     // it is compared as-is rather than adding claims.bid on top — the hold was
     // taken at mint. This still catches the campaign being re-priced or oversold
     // while the token was in flight.
-    const spend = db.prepare(
-      `SELECT COALESCE(SUM(bid_paise), 0) AS total,
-              COALESCE(SUM(CASE WHEN ts > unixepoch('now', 'start of day') THEN bid_paise END), 0) AS today
-       FROM impressions WHERE sponsor_id = ? AND state != 'void'`
-    ).get(sponsor.id);
-    if (spend.today > effectiveDailyBudget(sponsor) ||
-        (sponsor.budget_paise_total != null && spend.total > sponsor.budget_paise_total)) {
+    // Same split as the mint: today's spend is a ts-range read, the lifetime sum
+    // walks every row the sponsor ever served and is only paid for when a cap exists.
+    const spendToday = db.prepare(
+      `SELECT COALESCE(SUM(bid_paise), 0) AS today FROM impressions
+       WHERE sponsor_id = ? AND state != 'void' AND ts > unixepoch('now', 'start of day')`
+    ).get(sponsor.id).today;
+    const spendTotal = sponsor.budget_paise_total == null ? 0 : db.prepare(
+      "SELECT COALESCE(SUM(bid_paise), 0) AS total FROM impressions WHERE sponsor_id = ? AND state != 'void'"
+    ).get(sponsor.id).total;
+    if (spendToday > effectiveDailyBudget(sponsor) ||
+        (sponsor.budget_paise_total != null && spendTotal > sponsor.budget_paise_total)) {
       // Unredeemable from here on — void it so the advertiser gets the hold back
       // now instead of at TTL, and the next mint is not blocked by dead spend.
       db.prepare("UPDATE impressions SET state = 'void' WHERE id = ?").run(row.id);
@@ -1415,27 +1516,56 @@ app.get("/v1/teams/me", requireAuth, (req, res) => {
 // ─── Public Stats Dashboard ───────────────────────────────────────────────────
 
 // GET /v1/public/stats  — shareable dashboard numbers (no auth, aggregate only)
-// ponytail: 12 queries, 6 of them full scans of `impressions`, all synchronous —
-// measured ~810ms at 1M rows, which blocks the event loop ahead of /v1/impressions.
-// Costs nothing at today's row count. A 60s response cache fixes it in 3 lines, but
-// it must invalidate on withdrawal-status changes or public stats go stale (there is
-// a test asserting exactly that). Add it, with invalidation, before impressions pass ~100k.
-app.get("/v1/public/stats", (req, res) => {
+//
+// The impression aggregates below are full-table scans (~285ms at 200k rows, and
+// the landing page used to request them three times per view) that block the event
+// loop ahead of /v1/impressions. They are memoised for 60s: the page prints
+// `lastUpdated`, and a minute-old impression count is what a "live" counter means.
+// The withdrawal / user / signup counts stay live — they are sub-millisecond, and
+// there is a test asserting a completed withdrawal shows up immediately.
+// ponytail: module-level memo, same shape as leaderboardTotals().
+let statsCache = { at: 0, value: null };
+function impressionStats() {
+  if (statsCache.value && Date.now() - statsCache.at < 60_000) return statsCache.value;
   // billable = 1 throughout: an impression is public-stats-worthy once it has
   // rendered, not when its line was reserved (see db.js and /v1/me/analytics).
-  const totalImpressions = db.prepare("SELECT COUNT(*) as n FROM impressions WHERE billable = 1").get().n;
-  // Accrued earnings (what devs have racked up) — used for the per-dev average
-  // and the 7-day pace below, not for "paid out" (that's actual withdrawals).
-  const totalEarned = db.prepare(
-    "SELECT COALESCE(SUM(payout_paise), 0) AS total_paise FROM impressions WHERE billable = 1"
-  ).get().total_paise;
+  const lifetime = db.prepare(
+    `SELECT COUNT(*) AS n, COALESCE(SUM(payout_paise), 0) AS total_paise, COUNT(DISTINCT user_id) AS earners
+     FROM impressions WHERE billable = 1`
+  ).get();
+  const value = {
+    totalImpressions: lifetime.n,
+    // Accrued earnings (what devs have racked up) — used for the per-dev average
+    // and the 7-day pace, not for "paid out" (that's actual withdrawals).
+    totalEarned: lifetime.total_paise,
+    // "Active dev" here = any dev who has ever earned, so the average doesn't swing on a quiet day
+    earningDevs: lifetime.earners,
+    activeDevs: db.prepare(
+      "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE billable = 1 AND ts > unixepoch() - 86400"
+    ).get().n,
+    topTaskTypes: db.prepare(
+      `SELECT task_type, COUNT(*) as n FROM impressions
+       WHERE billable = 1 AND task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC LIMIT 5`
+    ).all(),
+    totalClicks: db.prepare("SELECT COUNT(*) as n FROM clicks").get().n,
+    paidLast7d: db.prepare(
+      "SELECT COALESCE(SUM(payout_paise), 0) AS paise FROM impressions WHERE billable = 1 AND ts > unixepoch() - 7 * 86400"
+    ).get().paise,
+    dailyImpressions: db.prepare(
+      `SELECT date(ts, 'unixepoch') AS day, COUNT(*) AS n FROM impressions
+       WHERE billable = 1 AND ts > unixepoch() - 14 * 86400 GROUP BY day ORDER BY day`
+    ).all(),
+  };
+  statsCache = { at: Date.now(), value };
+  return value;
+}
+
+app.get("/v1/public/stats", (req, res) => {
+  const s = impressionStats();
   // Money that has actually left the building — completed withdrawals only.
   const totalPaidOut = db.prepare(
     "SELECT COALESCE(SUM(amount_paise), 0) AS paise FROM withdrawals WHERE status = 'completed'"
   ).get().paise;
-  const activeDevs = db.prepare(
-    "SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE billable = 1 AND ts > unixepoch() - 86400"
-  ).get().n;
   // Money owed but not yet sent — shown alongside totalPaidOut so "our books" includes
   // what's in flight, not just what's already settled.
   const pendingPayouts = db.prepare(
@@ -1443,34 +1573,23 @@ app.get("/v1/public/stats", (req, res) => {
   ).get();
   const totalDevs = db.prepare("SELECT COUNT(*) as n FROM users WHERE status = 'active'").get().n;
   const totalSignups = db.prepare("SELECT COUNT(*) as n FROM beta_invites").get().n;
-  const topTaskTypes = db.prepare(
-    `SELECT task_type, COUNT(*) as n FROM impressions
-     WHERE billable = 1 AND task_type IS NOT NULL GROUP BY task_type ORDER BY n DESC LIMIT 5`
-  ).all();
-  const totalClicks = db.prepare("SELECT COUNT(*) as n FROM clicks").get().n;
-  const paidLast7d = db.prepare(
-    "SELECT COALESCE(SUM(payout_paise), 0) AS paise FROM impressions WHERE billable = 1 AND ts > unixepoch() - 7 * 86400"
-  ).get().paise;
-  // "Active dev" here = any dev who has ever earned, so the average doesn't swing on a quiet day
-  const earningDevs = db.prepare("SELECT COUNT(DISTINCT user_id) as n FROM impressions WHERE billable = 1").get().n;
-  const dailyImpressions = db.prepare(
-    `SELECT date(ts, 'unixepoch') AS day, COUNT(*) AS n FROM impressions
-     WHERE billable = 1 AND ts > unixepoch() - 14 * 86400 GROUP BY day ORDER BY day`
-  ).all();
 
+  // Public aggregate, identical for every caller: let the browser reuse it across
+  // the page's own repeat reads and let the edge cache it for the same minute.
+  res.setHeader("Cache-Control", "public, max-age=60");
   res.json({
-    totalImpressions,
+    totalImpressions: s.totalImpressions,
     totalPaidRupees: (totalPaidOut / 100).toFixed(2),
     pendingPayouts: { count: pendingPayouts.n, totalRupees: (pendingPayouts.paise / 100).toFixed(2) },
-    activeDevsToday: activeDevs,
+    activeDevsToday: s.activeDevs,
     totalDevs,
     totalSignups,
-    topTaskTypes,
-    totalClicks,
-    avgPerActiveDevRupees: (earningDevs ? totalEarned / earningDevs / 100 : 0).toFixed(2),
-    paidLast7dRupees: (paidLast7d / 100).toFixed(2),
-    dailyImpressions,
-    lastUpdated: new Date().toISOString(),
+    topTaskTypes: s.topTaskTypes,
+    totalClicks: s.totalClicks,
+    avgPerActiveDevRupees: (s.earningDevs ? s.totalEarned / s.earningDevs / 100 : 0).toFixed(2),
+    paidLast7dRupees: (s.paidLast7d / 100).toFixed(2),
+    dailyImpressions: s.dailyImpressions,
+    lastUpdated: new Date(statsCache.at).toISOString(),
   });
 });
 
@@ -1580,6 +1699,7 @@ app.post("/v1/public/signup", authRateLimit, async (req, res) => {
     github:  z.string().max(64).optional().nullable(),
     company: z.string().min(1).max(120),
     source:  z.string().max(64).optional(),
+    consent: z.literal(true),
   }).safeParse(req.body);
 
   if (!parse.success) return res.status(400).json({ error: "invalid_body" });
@@ -1617,8 +1737,8 @@ app.post("/v1/public/signup", authRateLimit, async (req, res) => {
   const code = generateInviteCode();
 
   try {
-    db.prepare("INSERT INTO beta_invites (code, email, email_canonical, company, role, github, source, ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-      .run(code, normalizedEmail, canonical, company.trim(), role || null, github || null, source || null, req.ip || null);
+    db.prepare("INSERT INTO beta_invites (code, email, email_canonical, company, role, github, source, ip, consent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(code, normalizedEmail, canonical, company.trim(), role || null, github || null, source || null, req.ip || null, Math.floor(Date.now() / 1000));
   } catch (e) {
     console.error("[signup] db error:", e.message);
     return res.status(500).json({ error: "signup_failed" });
@@ -1663,6 +1783,7 @@ app.post("/v1/public/advertiser-inquiry", authRateLimit, async (req, res) => {
     slot_type:       z.enum(["build", "test", "install", "all"]),
     product_type:    z.string().max(64).optional(),
     notes:           z.string().max(1000).optional(),
+    consent:         z.literal(true),
   }).safeParse(req.body);
 
   if (!parse.success) return res.status(400).json({ error: "invalid_body", details: parse.error.flatten() });
@@ -1677,9 +1798,9 @@ app.post("/v1/public/advertiser-inquiry", authRateLimit, async (req, res) => {
   try {
     db.prepare(`
       INSERT INTO advertiser_inquiries
-        (company, contact_name, email, website, ad_text, destination_url, budget_range, slot_type, product_type, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(d.company, d.contact_name, d.email, d.website || null, d.ad_text, d.destination_url, d.budget_range, d.slot_type, d.product_type || null, d.notes || null);
+        (company, contact_name, email, website, ad_text, destination_url, budget_range, slot_type, product_type, notes, consent_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(d.company, d.contact_name, d.email, d.website || null, d.ad_text, d.destination_url, d.budget_range, d.slot_type, d.product_type || null, d.notes || null, Math.floor(Date.now() / 1000));
   } catch (e) {
     console.error("[advertiser-inquiry] db error:", e.message);
     return res.status(500).json({ error: "db_error" });
@@ -2268,6 +2389,7 @@ app.get("/api/report", (req, res) => {
 });
 
 app.get("/admin", (req, res) => {
+  res.setHeader("X-Robots-Tag", "noindex, nofollow");
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
