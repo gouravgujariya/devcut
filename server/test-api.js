@@ -166,9 +166,27 @@ async function main() {
     assert.ok(k in ov, "overview lost key: " + k);
   }
 
+  // ── Public site: one canonical URL per page, crawl files, noindex on the rest ──
+  const loc = async (u) => { const r = await fetch(base + u, { redirect: "manual" }); return [r.status, r.headers.get("location")]; };
+  assert.deepStrictEqual(await loc("/site/how-it-works.html"), [301, "/how-it-works"], "legacy /site/*.html must 301 to the clean URL");
+  assert.deepStrictEqual(await loc("/index.html"), [301, "/"]);
+  assert.deepStrictEqual(await loc("/site/"), [301, "/"]);
+  assert.deepStrictEqual(await loc("/earnings/"), [301, "/earnings"]);
+  assert.deepStrictEqual(await loc("/site/dashboard.html?x=1"), [301, "/dashboard?x=1"], "query string must survive the redirect");
+  assert.strictEqual((await fetch(base + "/how-it-works")).status, 200, "clean URL serves the page");
+  assert.strictEqual((await fetch(base + "/v1/public/stats", { redirect: "manual" })).status, 200, "API paths are never redirected");
+  const robots = await (await fetch(base + "/robots.txt")).text();
+  assert.ok(/^Sitemap: https:\/\/.+\/sitemap\.xml$/m.test(robots) && robots.includes("Disallow: /admin"), robots);
+  const sitemap = await (await fetch(base + "/sitemap.xml")).text();
+  assert.ok(sitemap.includes("<loc>https://") && sitemap.includes("/how-it-works</loc>") && !sitemap.includes("login") && !sitemap.includes("dashboard"), sitemap);
+  assert.strictEqual((await fetch(base + "/admin")).headers.get("x-robots-tag"), "noindex, nofollow");
+
   // ── /v1/public/stats: new keys, zero PII ──────────────────────────────────
   const statsRes = await fetch(base + "/v1/public/stats");
   const stats = await statsRes.json();
+  // Public aggregate is cacheable; anything behind requireAuth must never be.
+  assert.strictEqual(statsRes.headers.get("cache-control"), "public, max-age=60");
+  assert.strictEqual((await fetch(base + "/v1/me", { headers: { Authorization: "Bearer " + token } })).headers.get("cache-control"), "no-store");
   for (const k of ["totalImpressions", "totalPaidRupees", "activeDevsToday", "totalDevs", "totalSignups", "topTaskTypes",
                    "totalClicks", "avgPerActiveDevRupees", "paidLast7dRupees", "dailyImpressions", "lastUpdated"]) {
     assert.ok(k in stats, "public stats missing key: " + k);
@@ -734,14 +752,16 @@ async function main() {
   // mailbox is a second way into (or a second copy of) the same account.
   const inviteRows = () => db.prepare("SELECT COUNT(*) AS n FROM beta_invites").get().n;
   const n0 = inviteRows();
-  const sign1 = await api("POST", "/v1/public/signup", { name: "Dee Vee", email: "d.e.v+beta@Gmail.com", company: "Acme" }, undefined, IP.signup);
+  const sign1 = await api("POST", "/v1/public/signup", { name: "Dee Vee", email: "d.e.v+beta@Gmail.com", company: "Acme", consent: true }, undefined, IP.signup);
   assert.strictEqual(sign1.status, 200, "signup failed: " + JSON.stringify(sign1.body));
   assert.ok(!sign1.body.resent, "a first-time address must mint a new invite, not resend one");
   assert.strictEqual(inviteRows(), n0 + 1, "first signup must create exactly one invite");
-  const sign2 = await api("POST", "/v1/public/signup", { name: "Dee Vee", email: "dev@gmail.com", company: "Acme" }, undefined, IP.signup);
+  assert.ok(db.prepare("SELECT consent_at FROM beta_invites WHERE email = ?").get("d.e.v+beta@gmail.com").consent_at,
+    "consent must be recorded with a timestamp");
+  const sign2 = await api("POST", "/v1/public/signup", { name: "Dee Vee", email: "dev@gmail.com", company: "Acme", consent: true }, undefined, IP.signup);
   assert.strictEqual(sign2.body.resent, true, "gmail dots/+tags must fold onto the existing invite");
   assert.strictEqual(inviteRows(), n0 + 1, "a canonical-duplicate signup must not mint a second invite code");
-  const sign3 = await api("POST", "/v1/public/signup", { name: "Someone", email: "someone.else@gmail.com", company: "Acme" }, undefined, IP.signup);
+  const sign3 = await api("POST", "/v1/public/signup", { name: "Someone", email: "someone.else@gmail.com", company: "Acme", consent: true }, undefined, IP.signup);
   assert.ok(!sign3.body.resent, "a genuinely different address must get its own invite");
   assert.strictEqual(inviteRows(), n0 + 2, "a distinct address must mint exactly one more invite");
 
@@ -774,7 +794,7 @@ async function main() {
   // ── email hygiene: undeliverable domains never mint an invite code ────────
   const IP_MAIL = "10.9.0.11";
   const disposable = await api("POST", "/v1/public/signup",
-    { name: "Throw Away", email: "x@mailinator.com", company: "Acme" }, undefined, IP_MAIL);
+    { name: "Throw Away", email: "x@mailinator.com", company: "Acme", consent: true }, undefined, IP_MAIL);
   assert.strictEqual(disposable.status, 400, "a disposable domain must be refused: " + JSON.stringify(disposable.body));
   assert.strictEqual(disposable.body.error, "email_undeliverable", "a disposable domain must report email_undeliverable");
   assert.strictEqual(db.prepare("SELECT COUNT(*) AS n FROM beta_invites WHERE email LIKE '%@mailinator.com'").get().n, 0,
@@ -783,11 +803,16 @@ async function main() {
   // A normal domain still gets through. The MX check fails open, so this holds
   // on a box with no DNS too — and the signup IP lands in beta_invites.ip.
   const realSignup = await api("POST", "/v1/public/signup",
-    { name: "Real Dev", email: "realdev@gmail.com", company: "Acme" }, undefined, IP_MAIL);
+    { name: "Real Dev", email: "realdev@gmail.com", company: "Acme", consent: true }, undefined, IP_MAIL);
   assert.strictEqual(realSignup.status, 200, "a deliverable domain must still sign up: " + JSON.stringify(realSignup.body));
   assert.ok(!("code" in realSignup.body), "signup must never echo the invite code — it is the login credential");
   assert.strictEqual(db.prepare("SELECT ip FROM beta_invites WHERE email = ?").get("realdev@gmail.com").ip, IP_MAIL,
     "signup must record req.ip");
+
+  // ── consent to Terms/Privacy is mandatory, not just UI-side ────────────────
+  const noConsent = await api("POST", "/v1/public/signup",
+    { name: "No Consent", email: "noconsent@gmail.com", company: "Acme" }, undefined, IP_MAIL);
+  assert.strictEqual(noConsent.status, 400, "signup without consent:true must be refused server-side");
 
   // ── advertiser-inquiry is rate limited: it fires two Resend emails per call ─
   // Raw fetch, not api(): express-rate-limit's 429 body is text, not JSON.

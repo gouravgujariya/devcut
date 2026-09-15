@@ -106,7 +106,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("devcut.openWebsite", () => {
-      vscode.env.openExternal(vscode.Uri.parse("https://waitwage-production.up.railway.app/site/"));
+      vscode.env.openExternal(vscode.Uri.parse("https://www.devcut.co.in/"));
     })
   );
 

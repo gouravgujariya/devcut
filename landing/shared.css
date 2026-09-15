@@ -76,6 +76,8 @@ nav {
   font-size: .88rem; transition: opacity .2s, transform .15s;
 }
 .nav-cta:hover { opacity: .85; transform: translateY(-1px); }
+/* .nav-links a (0,1,1) outranked .nav-cta (0,1,0), so the CTA rendered grey-on-green (1.8:1). */
+.nav-links .nav-cta { color: #000; }
 
 /* ── SECTION PRIMITIVES ── */
 section { padding: 6rem 2rem; }
@@ -135,16 +137,16 @@ section { padding: 6rem 2rem; }
 .vscode-titlebar .dot.yellow { background: #febc2e; }
 .vscode-titlebar .dot.green  { background: #28c840; }
 .vscode-tabs { background: #252537; height: 35px; display: flex; align-items: flex-end; padding: 0 1rem; border-bottom: 1px solid #1e1e2e; }
-.vscode-tab { padding: .4rem 1rem; font-size: .78rem; color: var(--muted); border-right: 1px solid #1e1e2e; cursor: default; }
+.vscode-tab { padding: .4rem 1rem; font-size: .78rem; color: #b0b8c0; border-right: 1px solid #1e1e2e; cursor: default; }
 .vscode-tab.active { background: #1e1e2e; color: var(--text); }
 .vscode-editor { padding: 1.2rem 1.5rem; font-family: 'Fira Code','Cascadia Code',monospace; font-size: .8rem; line-height: 1.8; min-height: 120px; text-align: left; }
 .ln  { color: #3e3e5e; width: 1.8rem; display: inline-block; user-select: none; }
-.kw  { color: #c792ea; }
-.fn  { color: #82aaff; }
+.kw  { color: #d7a8f7; }
+.fn  { color: #a3c2ff; }
 .str { color: #c3e88d; }
-.cm  { color: #546e7a; }
+.cm  { color: #7f95a0; }
 .vscode-statusbar { background: #007acc; height: 26px; display: flex; align-items: center; padding: 0 .8rem; font-size: .72rem; justify-content: space-between; }
-.statusbar-left  { display: flex; align-items: center; gap: .8rem; color: rgba(255,255,255,.8); }
+.statusbar-left  { display: flex; align-items: center; gap: .8rem; color: #fff; }
 .statusbar-right { display: flex; align-items: center; gap: .8rem; }
 .statusbar-ad {
   display: flex; align-items: center; gap: .4rem;
@@ -263,6 +265,13 @@ button:disabled { opacity: .6; cursor: not-allowed; transform: none !important; 
   .bar-count { width: 4.5rem; }
 }
 
+/* ── ACCESSIBILITY: keyboard focus ── */
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -273,4 +282,11 @@ button:disabled { opacity: .6; cursor: not-allowed; transform: none !important; 
   nav { padding: 0 1rem; }
   .nav-links { gap: .9rem; }
   .nav-cta { padding: .45rem .85rem; }
+}
+
+/* Reduced motion: the orbs, floating tokens and glow loops are decoration; the fade-ups
+   still run once so nothing stays stuck at opacity 0. */
+@media (prefers-reduced-motion: reduce) {
+  .orb, .token, .live-dot, .hero-badge, .vscode-window, h1 .highlight { animation: none !important; }
+  html { scroll-behavior: auto; }
 }

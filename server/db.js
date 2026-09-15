@@ -238,6 +238,11 @@ try { db.exec("ALTER TABLE beta_invites ADD COLUMN ip TEXT"); } catch (_) {}
 
 // GitHub sign-in as an alternative to invite-code login (POST /v1/auth/github)
 try { db.exec("ALTER TABLE users ADD COLUMN github_id TEXT"); } catch (_) {}
+
+// Evidence of consent to Terms + Privacy Policy at signup / inquiry time
+// (compliance requirement — see POST /v1/public/signup and .../advertiser-inquiry).
+try { db.exec("ALTER TABLE beta_invites ADD COLUMN consent_at INTEGER"); } catch (_) {}
+try { db.exec("ALTER TABLE advertiser_inquiries ADD COLUMN consent_at INTEGER"); } catch (_) {}
 try { db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id) WHERE github_id IS NOT NULL"); } catch (_) {}
 
 // Single-use impression tokens + at most one pending withdrawal per user.
@@ -251,7 +256,6 @@ for (const sql of [
 
 // Indexes for high-traffic queries (earnings, budget checks, token lookup)
 db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_impressions_user    ON impressions(user_id);
   CREATE INDEX IF NOT EXISTS idx_impressions_ts      ON impressions(ts);
   CREATE INDEX IF NOT EXISTS idx_impressions_sponsor ON impressions(sponsor_id);
   CREATE INDEX IF NOT EXISTS idx_sessions_user       ON sessions(user_id);
@@ -260,6 +264,10 @@ db.exec(`
   -- click it" on every request; both filter user_id + sponsor_id together.
   CREATE INDEX IF NOT EXISTS idx_clicks_user_sponsor   ON clicks(user_id, sponsor_id, ts);
   CREATE INDEX IF NOT EXISTS idx_impressions_user_spon ON impressions(user_id, sponsor_id, ts);
+  -- (user_id) alone was a strict prefix of idx_impressions_user_spon: every user_id=?
+  -- lookup rides the composite (verified with EXPLAIN QUERY PLAN at 200k rows), so the
+  -- extra index only added write cost to the hottest insert table.
+  DROP INDEX IF EXISTS idx_impressions_user;
 `);
 
 // Advertiser inquiries submitted via the landing page
@@ -316,5 +324,14 @@ db.exec(`
 db.exec(`
   CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0)
 `);
+
+// Planner statistics. Without sqlite_stat1 the planner picked idx_impressions_sponsor
+// for the per-sponsor "spend today" GROUP BY on every mint (GET /v1/sponsor-line) —
+// a full index scan, ~110ms at 200k rows — instead of the ts range it can do in
+// <1ms. A sampled ANALYZE (analysis_limit) is not enough: it under-counts how few
+// distinct sponsor_ids there are and keeps the bad plan, so this is the full pass.
+// ponytail: ~130ms once at boot per 200k rows; move to a nightly ANALYZE if boot
+// time ever matters at millions of rows.
+db.exec("ANALYZE");
 
 module.exports = db;

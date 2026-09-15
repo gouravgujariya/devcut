@@ -3,9 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- inline SVG favicon: no request, and no /favicon.ico 404 in the console -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20128%20128'%3E%3Cdefs%3E%3ClinearGradient%20id='b'%20x2='1'%20y2='1'%3E%3Cstop%20stop-color='%2379c0ff'/%3E%3Cstop%20offset='1'%20stop-color='%23388bfd'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='128'%20height='128'%20rx='22'%20fill='%23161b22'/%3E%3Crect%20width='128'%20height='4'%20rx='2'%20fill='url(%23b)'/%3E%3Ctext%20x='18'%20y='88'%20font-family='system-ui,sans-serif'%20font-size='72'%20font-weight='900'%20fill='%23fff'%20letter-spacing='-4'%3ED%3C/text%3E%3Ctext%20x='62'%20y='88'%20font-family='system-ui,sans-serif'%20font-size='72'%20font-weight='900'%20fill='url(%23b)'%20letter-spacing='-4'%3EC%3C/text%3E%3Cline%20x1='60'%20y1='16'%20x2='52'%20y2='98'%20stroke='%2358a6ff'%20stroke-width='3.5'%20stroke-linecap='round'%20opacity='.85'/%3E%3Crect%20x='16'%20y='103'%20width='96'%20height='6'%20rx='3'%20fill='%2321262d'/%3E%3Crect%20x='16'%20y='103'%20width='40'%20height='6'%20rx='3'%20fill='url(%23b)'%20opacity='.7'/%3E%3C/svg%3E" />
   <title>How It Works — DevCut</title>
   <meta name="description" content="How DevCut turns your VS Code build time into passive income. The 4-step loop, privacy details, and technical explainer." />
-  <link rel="stylesheet" href="shared.css" />
+  <link rel="canonical" href="https://www.devcut.co.in/how-it-works" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="DevCut" />
+  <meta property="og:url" content="https://www.devcut.co.in/how-it-works" />
+  <meta property="og:title" content="How It Works — DevCut" />
+  <meta property="og:description" content="How DevCut turns your VS Code build time into passive income. The 4-step loop, privacy details, and technical explainer." />
+  <meta property="og:image" content="https://www.devcut.co.in/og-image.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="DevCut — Get paid while you wait on builds. A sponsored line in the VS Code status bar." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <script type="application/ld+json">{"@context": "https://schema.org", "@graph": [{"@type": "Organization", "@id": "https://www.devcut.co.in/#org", "name": "DevCut", "url": "https://www.devcut.co.in/", "logo": "https://www.devcut.co.in/og-image.jpg", "email": "techsupport@devcut.co.in", "sameAs": ["https://github.com/gouravgujariya/waitwage", "https://marketplace.visualstudio.com/items?itemName=gouravgujariya.devcut"]}, {"@type": "WebSite", "@id": "https://www.devcut.co.in/#website", "url": "https://www.devcut.co.in/", "name": "DevCut", "publisher": {"@id": "https://www.devcut.co.in/#org"}}, {"@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://www.devcut.co.in/"}, {"@type": "ListItem", "position": 2, "name": "How It Works", "item": "https://www.devcut.co.in/how-it-works"}]}, {"@type": "WebPage", "@id": "https://www.devcut.co.in/how-it-works", "url": "https://www.devcut.co.in/how-it-works", "name": "How It Works — DevCut", "description": "How DevCut turns your VS Code build time into passive income. The 4-step loop, privacy details, and technical explainer.", "isPartOf": {"@id": "https://www.devcut.co.in/#website"}}, {"@type": "FAQPage", "@id": "https://www.devcut.co.in/how-it-works#faq", "mainEntity": [{"@type": "Question", "name": "Does the extension slow down VS Code?", "acceptedAnswer": {"@type": "Answer", "text": "No. It only makes a single lightweight HTTP call when a task starts (to fetch the ad line) and another when it ends (to record the impression). No background polling, no analytics SDK, no always-on WebSocket."}}, {"@type": "Question", "name": "Can I turn it off during focus time?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. One command — DevCut: Toggle — or flip devcut.enabled to false in settings. Earnings pause instantly and resume when you re-enable. The status bar item disappears completely while disabled."}}, {"@type": "Question", "name": "How does the second-price auction work?", "acceptedAnswer": {"@type": "Answer", "text": "At each impression, the server ranks all active bids for the matching slot type. The highest bidder wins and pays ₹0.01 above the second-highest bid — never more than their stated max. This prevents advertisers from overpaying and encourages honest bidding."}}, {"@type": "Question", "name": "What task types trigger a slot?", "acceptedAnswer": {"@type": "Answer", "text": "Any VS Code task that fires onDidStartTask and runs for >3 seconds. This includes npm run build, cargo build, jest, pytest, docker pull, npm install, and any custom task in your tasks.json. You can whitelist or blacklist specific task names in settings."}}, {"@type": "Question", "name": "How are impressions verified?", "acceptedAnswer": {"@type": "Answer", "text": "The server issues a signed token with each ad fetch. The extension sends that token back when recording the impression, along with the measured slot duration. The server verifies the signature and rejects impressions that were never fetched or that arrive outside the valid time window."}}, {"@type": "Question", "name": "Can I audit the payout math?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — the impression counter, earnings tally, and withdrawal ledger are all in the open-source server repo. You can also run DevCut: Show Earnings Breakdown in the Command Palette to see a per-day log of slots, impressions, clicks, and accrued balance."}}]}]}</script>
+  <link rel="stylesheet" href="/shared.css" />
   <style>
     .hero { min-height: 55vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 8rem 2rem 4rem; }
     h1 { font-size: clamp(2.2rem, 5.5vw, 3.8rem); font-weight: 900; line-height: 1.08; letter-spacing: -.03em; max-width: 720px; }
@@ -43,16 +57,16 @@
 <canvas id="bg-canvas"></canvas>
 
 <nav>
-  <a class="nav-logo" href="index.html">
+  <a class="nav-logo" href="/">
     <span class="live-dot"></span>
     <span class="logo-w">Dev</span>Cut
   </a>
   <div class="nav-links">
-    <a href="how-it-works.html" class="hide-mobile">How It Works</a>
-    <a href="earnings.html" class="hide-mobile">Earnings</a>
-    <a href="advertisers.html" class="hide-mobile">Advertise</a>
-    <a href="login.html">Sign In</a>
-    <a class="nav-cta" href="index.html#get-code">Get Your Code</a>
+    <a href="/how-it-works" class="hide-mobile">How It Works</a>
+    <a href="/earnings" class="hide-mobile">Earnings</a>
+    <a href="/advertisers" class="hide-mobile">Advertise</a>
+    <a href="/login">Sign In</a>
+    <a class="nav-cta" href="/#get-code">Get Your Code</a>
   </div>
 </nav>
 
@@ -98,7 +112,7 @@
         <div class="big-step-num">04</div>
         <div class="big-step-content">
           <h3>💸 Withdraw to UPI</h3>
-          <p>Set your UPI ID once in the extension settings (<code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">devcut.upiId</code>). When your balance crosses ₹50, we trigger a Razorpay X payout automatically — weekly. You get a GPay / PhonePe / Paytm notification within 48h. No bank forms. No SWIFT codes. No waiting 14 days.</p>
+          <p>Set your UPI ID once in the extension settings (<code style="background:var(--surface2);padding:.1rem .4rem;border-radius:4px;font-family:monospace;">devcut.upiId</code>). When your balance crosses ₹50, request a withdrawal from the extension or the dashboard. During the beta each withdrawal is reviewed and paid manually to your UPI ID, and you can watch its status on the dashboard. No bank forms. No SWIFT codes.</p>
         </div>
       </div>
     </div>
@@ -158,9 +172,9 @@
             <td class="no-badge">Never</td>
           </tr>
           <tr>
-            <td>IP address (stored)</td>
-            <td>—</td>
-            <td class="no-badge">Received but not logged</td>
+            <td>IP address</td>
+            <td>Fraud/abuse detection (e.g. multiple accounts sharing one payout ID)</td>
+            <td class="yes-badge">Stored against signups and impressions</td>
           </tr>
         </tbody>
       </table>
@@ -172,7 +186,7 @@
       border-radius:12px;padding:1.5rem 2rem;
     ">
       <strong style="color:var(--text);">Zero-trust option:</strong>
-      <span style="color:var(--muted);font-size:.9rem;"> The entire server is open source. You can fork it, plug in your own Razorpay keys, and run a self-hosted instance. The extension accepts a custom server URL via <code>devcut.backendUrl</code> in settings.</span>
+      <span style="color:var(--muted);font-size:.9rem;"> The entire server is open source. You can fork it, run a self-hosted instance, and pay out however you choose. The extension accepts a custom server URL via <code>devcut.backendUrl</code> in settings.</span>
     </div>
   </div>
 </section>
@@ -205,7 +219,7 @@
       </div>
       <div class="faq-item">
         <h3>Can I audit the payout math?</h3>
-        <p>Yes — the impression counter, earnings tally, and Razorpay payout trigger are all in the open-source server repo. You can also run <code>DevCut: Show Earnings Breakdown</code> in the Command Palette to see a per-day log of slots, impressions, clicks, and accrued balance.</p>
+        <p>Yes — the impression counter, earnings tally, and withdrawal ledger are all in the open-source server repo. You can also run <code>DevCut: Show Earnings Breakdown</code> in the Command Palette to see a per-day log of slots, impressions, clicks, and accrued balance.</p>
       </div>
     </div>
   </div>
@@ -217,8 +231,8 @@
     <h2 class="section-title">Ready to try it?</h2>
     <p class="section-sub" style="margin:.8rem auto 2rem;">Install the extension, then get your invite code emailed to you in seconds.</p>
     <div class="cta-row" style="margin-bottom:2rem;">
-      <a class="btn-primary" href="index.html#get-code">Get Your Free Code →</a>
-      <a class="btn-secondary" href="login.html">Sign In</a>
+      <a class="btn-primary" href="/#get-code">Get Your Free Code →</a>
+      <a class="btn-secondary" href="/login">Sign In</a>
     </div>
     <div style="
       background:var(--surface2);border:1px solid var(--border);
@@ -241,15 +255,22 @@
   <div class="footer-logo">⚡ <span>Dev</span>Cut</div>
   <p style="margin-top:.4rem;">Open source · MIT licence · Built for developers, by a developer</p>
   <div style="margin-top:1rem;display:flex;gap:1.5rem;justify-content:center;flex-wrap:wrap;">
-    <a href="how-it-works.html">How It Works</a>
-    <a href="earnings.html">Earnings</a>
-    <a href="advertisers.html">Advertise</a>
-    <a href="index.html#india">India</a>
-    <a href="https://github.com/gouravgujariya/devcut" target="_blank" rel="noopener">GitHub</a>
+    <a href="/how-it-works">How It Works</a>
+    <a href="/earnings">Earnings</a>
+    <a href="/advertisers">Advertise</a>
+    <a href="/#india">India</a>
+    <a href="https://github.com/gouravgujariya/waitwage" target="_blank" rel="noopener">GitHub</a>
     <a href="mailto:er.gouravgujariya@gmail.com">Contact</a>
-    <a href="index.html#faq">FAQ</a>
+    <a href="/#faq">FAQ</a>
   </div>
-  <p style="margin-top:1.5rem;font-size:.78rem;color:#3e4450;">© 2026 DevCut. Making idle time less idle.</p>
+  <div style="margin-top:1rem;display:flex;gap:1.2rem;justify-content:center;flex-wrap:wrap;font-size:.78rem;">
+    <a href="/privacy-policy">Privacy Policy</a>
+    <a href="/terms">Terms</a>
+    <a href="/cookie-policy">Cookie Policy</a>
+    <a href="/refund-policy">Refund Policy</a>
+  </div>
+  <p style="margin-top:1.2rem;font-size:.78rem;color:#7d8590;">A product of Microlent Systems Pvt. Ltd., Jodhpur, Rajasthan, India.</p>
+  <p style="margin-top:.5rem;font-size:.78rem;color:#7d8590;">© 2026 DevCut. Making idle time less idle.</p>
 </footer>
 
 <script>
@@ -286,11 +307,19 @@
       if(p.symbol){ctx.fillStyle=p.color;ctx.font='11px monospace';ctx.fillText(p.symbol,p.x,p.y);}
       else{ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=p.color;ctx.fill();}
     }
-    ctx.globalAlpha=1;requestAnimationFrame(draw);
+    ctx.globalAlpha=1;requestAnimationFrame(schedule);
+  }
+  // ponytail: 30fps — the canvas repaint was ~80% of idle main-thread paint time and the
+  // particles drift 0.4px/frame, so half the frames are visually identical anyway.
+  let last=0;
+  function schedule(t){ if(t-last<33){requestAnimationFrame(schedule);return;} last=t; draw();
   }
   window.addEventListener('resize',resize);
   window.addEventListener('mousemove',e=>{mouse.x=e.clientX;mouse.y=e.clientY;});
-  init();draw();
+  // Reduced-motion users get a static field; everyone else starts after first paint so the
+  // canvas init (which forces layout) never sits between the parser and the first frame.
+  const still=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  addEventListener('load',()=>{ init(); if(still) draw(); else requestAnimationFrame(schedule); });
 })();
 
 /* ── SCROLL REVEAL ── */

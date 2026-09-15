@@ -3,10 +3,23 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- inline SVG favicon: no request, and no /favicon.ico 404 in the console -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20128%20128'%3E%3Cdefs%3E%3ClinearGradient%20id='b'%20x2='1'%20y2='1'%3E%3Cstop%20stop-color='%2379c0ff'/%3E%3Cstop%20offset='1'%20stop-color='%23388bfd'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='128'%20height='128'%20rx='22'%20fill='%23161b22'/%3E%3Crect%20width='128'%20height='4'%20rx='2'%20fill='url(%23b)'/%3E%3Ctext%20x='18'%20y='88'%20font-family='system-ui,sans-serif'%20font-size='72'%20font-weight='900'%20fill='%23fff'%20letter-spacing='-4'%3ED%3C/text%3E%3Ctext%20x='62'%20y='88'%20font-family='system-ui,sans-serif'%20font-size='72'%20font-weight='900'%20fill='url(%23b)'%20letter-spacing='-4'%3EC%3C/text%3E%3Cline%20x1='60'%20y1='16'%20x2='52'%20y2='98'%20stroke='%2358a6ff'%20stroke-width='3.5'%20stroke-linecap='round'%20opacity='.85'/%3E%3Crect%20x='16'%20y='103'%20width='96'%20height='6'%20rx='3'%20fill='%2321262d'/%3E%3Crect%20x='16'%20y='103'%20width='40'%20height='6'%20rx='3'%20fill='url(%23b)'%20opacity='.7'/%3E%3C/svg%3E" />
   <title>Your Dashboard — DevCut</title>
   <meta name="description" content="Your DevCut earnings, impressions, clicks and payout status." />
   <meta name="robots" content="noindex" />
-  <link rel="stylesheet" href="shared.css" />
+  <link rel="canonical" href="https://www.devcut.co.in/dashboard" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="DevCut" />
+  <meta property="og:url" content="https://www.devcut.co.in/dashboard" />
+  <meta property="og:title" content="Your Dashboard — DevCut" />
+  <meta property="og:description" content="Your DevCut earnings, impressions, clicks and payout status." />
+  <meta property="og:image" content="https://www.devcut.co.in/og-image.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="DevCut — Get paid while you wait on builds. A sponsored line in the VS Code status bar." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="stylesheet" href="/shared.css" />
   <style>
     .dash-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
     .dash-head h1 { font-size: clamp(1.5rem, 5vw, 2.1rem); font-weight: 900; letter-spacing: -.02em; }
@@ -38,14 +51,14 @@
 </div>
 
 <nav>
-  <a class="nav-logo" href="index.html">
+  <a class="nav-logo" href="/">
     <span class="live-dot"></span>
     <span class="logo-w">Dev</span>Cut
   </a>
   <div class="nav-links">
-    <a href="how-it-works.html" class="hide-mobile">How It Works</a>
-    <a href="earnings.html" class="hide-mobile">Earnings</a>
-    <a href="index.html#install" class="hide-mobile">Install</a>
+    <a href="/how-it-works" class="hide-mobile">How It Works</a>
+    <a href="/earnings" class="hide-mobile">Earnings</a>
+    <a href="/#install" class="hide-mobile">Install</a>
     <button class="link-btn" id="logoutBtn" type="button">Sign out</button>
   </div>
 </nav>
@@ -198,12 +211,18 @@
 <footer>
   <div class="footer-logo">⚡ <span>Dev</span>Cut</div>
   <div style="margin-top:1rem;display:flex;gap:1.5rem;justify-content:center;flex-wrap:wrap;">
-    <a href="how-it-works.html">How It Works</a>
-    <a href="earnings.html">Earnings</a>
-    <a href="advertisers.html">Advertise</a>
+    <a href="/how-it-works">How It Works</a>
+    <a href="/earnings">Earnings</a>
+    <a href="/advertisers">Advertise</a>
     <a href="mailto:er.gouravgujariya@gmail.com">Contact</a>
   </div>
-  <p style="margin-top:1.5rem;font-size:.78rem;color:#3e4450;">© 2026 DevCut. Making idle time less idle.</p>
+  <div style="margin-top:1rem;display:flex;gap:1.2rem;justify-content:center;flex-wrap:wrap;font-size:.78rem;">
+    <a href="/privacy-policy">Privacy Policy</a>
+    <a href="/terms">Terms</a>
+    <a href="/cookie-policy">Cookie Policy</a>
+  </div>
+  <p style="margin-top:1.2rem;font-size:.78rem;color:#7d8590;">A product of Microlent Systems Pvt. Ltd., Jodhpur, Rajasthan, India.</p>
+  <p style="margin-top:.5rem;font-size:.78rem;color:#7d8590;">© 2026 DevCut. Making idle time less idle.</p>
 </footer>
 
 <script>
@@ -218,7 +237,7 @@
   function signOut() {
     localStorage.removeItem('devcut_token');
     localStorage.removeItem('devcut_uid');
-    location.replace('login.html');
+    location.replace('/login');
   }
   /* ── GitHub OAuth round-trip result (the link flow sends `next` back here) ─ */
   // Drop the fragment: tokens in the address bar get bookmarked, screenshotted and
@@ -415,7 +434,7 @@
     linkGhBtn.disabled = true;
     linkGhBtn.textContent = 'Redirecting…';
     try {
-      const r = await api('/v1/auth/github/link/start', 'POST', { next: '/site/dashboard.html' });
+      const r = await api('/v1/auth/github/link/start', 'POST', { next: '/dashboard' });
       if (!r || !r.url) throw new Error('no url');
       location.href = r.url;
     } catch (err) {
