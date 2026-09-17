@@ -1,0 +1,75 @@
+version: 1
+timezone: Asia/Kolkata
+approval_required: true
+
+# Initial hypothesis. Adjust after 3-4 weeks using actual Instagram insights.
+weekly_schedule:
+  monday:
+    time: "19:30"
+    format: reel_or_meme
+    pillar: trend
+    brief: "Adapt one fresh meme/trend to a developer situation. Product mention optional."
+  tuesday:
+    time: "19:30"
+    format: reel
+    pillar: relatable_developer
+    brief: "Short developer POV/skit with a strong first-2-second hook."
+  wednesday:
+    time: "19:30"
+    format: carousel
+    pillar: shareable_developer_content
+    brief: "5-7 slides. Relatable, useful, or funny enough to save/share."
+  thursday:
+    time: "19:30"
+    format: reel
+    pillar: current_trend
+    brief: "Use a currently fresh format/audio only when it maps naturally to developer culture."
+  friday:
+    time: "20:00"
+    format: poster_or_meme
+    pillar: developer_humor
+    brief: "Simple high-contrast joke/poster that can be understood in under 2 seconds."
+  saturday:
+    time: "18:00"
+    format: reel_or_carousel
+    pillar: build_in_public
+    brief: "DevCut founder story, metric, mistake, experiment, payout proof, feature or lesson."
+  sunday:
+    time: "18:00"
+    format: meme_or_community
+    pillar: community
+    brief: "Low-pressure relatable content designed primarily for comments/shares."
+
+content_mix:
+  relatable_and_memes_percent: 50
+  trend_adaptations_percent: 25
+  carousels_percent: 15
+  product_and_founder_percent: 10
+
+weekly_agent_run:
+  research_day: monday
+  candidate_count: 12
+  shortlist_count: 7
+  freshness_window_days: 7
+  require_developer_relevance: true
+  require_human_approval: true
+
+metrics:
+  primary:
+    - shares_per_reach
+    - saves_per_reach
+    - profile_visits
+    - website_clicks
+    - instagram_attributed_installs
+    - instagram_attributed_activations
+  secondary:
+    - comments
+    - follows
+    - likes
+
+rules:
+  - "Never invent DevCut earnings, payouts, download counts, advertiser results or testimonials."
+  - "One CTA maximum per post."
+  - "A meme should work even without knowing DevCut."
+  - "Do not queue a stale trend simply to fill a slot. Replace it with evergreen developer humor."
+  - "Do not auto-publish until the approval_required flag is intentionally changed after enough reviewed posts."
